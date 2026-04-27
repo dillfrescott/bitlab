@@ -1,0 +1,27 @@
+{
+  "name": "bitlab",
+  "version": "1.0.0",
+  "description": "WebTorrent playback service backed by bitmagnet live search",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js"
+  },
+  "keywords": [
+    "webtorrent",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.2.1",
+    "stremio-addon-sdk": "^1.6.10",
+    "webtorrent": "^2.8.5"
+  },
+  "devDependencies": {
+    "decomment": "^0.9.5",
+    "strip-comments": "^2.0.1"
+  }
+}

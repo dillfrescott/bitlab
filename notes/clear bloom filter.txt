@@ -1,0 +1,5 @@
+docker compose stop bitmagnet
+
+docker compose exec postgres psql -U postgres -d bitmagnet -c "TRUNCATE TABLE bloom_filters;"
+
+docker compose start bitmagnet

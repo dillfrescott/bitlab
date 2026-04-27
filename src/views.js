@@ -1,0 +1,921 @@
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function parseUtcTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = String(value).replace(" ", "T");
+  const isoValue = /(?:Z|[+-]\d\d:\d\d)$/.test(normalized) ? normalized : `${normalized}Z`;
+  const parsed = new Date(isoValue);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function createTimestampFormatter(timezone) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+
+  return (value) => {
+    const parsed = parseUtcTimestamp(value);
+    return parsed ? formatter.format(parsed) : String(value || "");
+  };
+}
+
+function layout({ title, body }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101010;
+      --panel: #171717;
+      --line: #2b2b2b;
+      --line-strong: #3a3a3a;
+      --text: #f2f2f2;
+      --muted: #a1a1a1;
+      --accent: #f2f2f2;
+      --accent-2: #7ea2ff;
+      --danger: #d35b45;
+      --danger-ink: #ffffff;
+      --success-bg: #152016;
+      --success-line: #2d4730;
+      --live: #8bd18b;
+    }
+    * { box-sizing: border-box; }
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 209, 139, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(139, 209, 139, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 209, 139, 0); }
+    }
+    .live-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--live);
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+      animation: pulse 2s infinite;
+    }
+    .reveal-toggle {
+      width: auto;
+      display: inline-block;
+      padding: 4px 10px;
+      font-size: 11px;
+      background: var(--line-strong);
+      color: var(--text);
+      border: 1px solid var(--line);
+      cursor: pointer;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .reveal-toggle:hover {
+      border-color: var(--accent-2);
+    }
+    .reveal-secret[hidden] {
+      display: none;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--text);
+      background: var(--bg) url("/static/background.svg") no-repeat fixed center;
+      background-size: cover;
+      min-height: 100vh;
+    }
+    a { color: var(--accent-2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      background: #111111;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 6px;
+      word-break: break-all;
+    }
+    .shell, .login-shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+    .login-shell { max-width: 420px; margin-top: 72px; }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+      font-weight: 700;
+    }
+    .hero p, .small {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .stack, .list {
+      display: grid;
+      gap: 14px;
+    }
+    .list { gap: 12px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .stat, .panel, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 0;
+      box-shadow: none;
+    }
+    .stat, .panel { padding: 18px; }
+    .card { padding: 14px; }
+    .eyebrow {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+      margin-bottom: 14px;
+    }
+    .value {
+      font-size: 32px;
+      font-weight: 600;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .main-grid {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    form { display: grid; gap: 10px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+    input, button {
+      width: 100%;
+      border-radius: 0;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      background: #111111;
+      color: var(--text);
+      font: inherit;
+    }
+    input[type="checkbox"] {
+      width: auto;
+      padding: 0;
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      font-size: 14px;
+    }
+    input:focus, button:focus {
+      outline: 2px solid #7ea2ff;
+      outline-offset: 1px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 600;
+      background: var(--accent);
+      color: #111111;
+      border-color: var(--accent);
+    }
+    .danger {
+      background: var(--danger);
+      color: var(--danger-ink);
+      border-color: var(--danger);
+    }
+    .msg {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 0;
+      background: var(--success-bg);
+      border: 1px solid var(--success-line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .msg button {
+      width: auto;
+      min-width: 32px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .msg button:hover {
+      color: var(--text);
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid var(--line);
+      background: #111111;
+      color: var(--muted);
+    }
+    .chip.good { color: #8bd18b; }
+    .chip.bad { color: var(--danger); }
+    .section-title {
+      margin: 0 0 14px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header-actions form {
+      display: block;
+      margin: 0;
+    }
+    .header-actions .button-link,
+    .header-actions button {
+      width: 112px;
+      min-width: 112px;
+      padding: 11px 12px;
+    }
+    .muted-block {
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    details.revoke-details {
+      margin-top: 10px;
+    }
+    details.revoke-details summary {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+    }
+    details.revoke-details summary::-webkit-details-marker {
+      display: none;
+    }
+    .revoke-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      padding: 8px 12px;
+      border: 1px solid var(--danger);
+      background: transparent;
+      color: var(--danger);
+      font-weight: 600;
+    }
+    details.revoke-details[open] .revoke-toggle {
+      background: var(--danger);
+      color: var(--danger-ink);
+    }
+    .revoke-form {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .button-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      padding: 8px 12px;
+      border: 1px solid var(--line-strong);
+      background: #111111;
+      color: var(--text);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .button-link:hover {
+      text-decoration: none;
+      border-color: var(--accent-2);
+    }
+    .manifest-link {
+      display: inline-block;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .kv .card {
+      min-height: 100%;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th:first-child,
+    td:first-child {
+      padding-left: 0;
+    }
+    th:last-child,
+    td:last-child {
+      padding-right: 0;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    td code {
+      font-size: 12px;
+    }
+    @media (max-width: 900px) {
+      .stats, .main-grid { grid-template-columns: 1fr; }
+      .hero {
+        flex-direction: column;
+      }
+      .header-actions {
+        width: 100%;
+      }
+      .header-actions form,
+      .header-actions button {
+        width: 100%;
+      }
+      .kv {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .shell, .login-shell {
+        width: min(100% - 20px, 1120px);
+        padding: 20px 0 28px;
+      }
+      .stat, .panel { padding: 14px; }
+      .card { padding: 12px; }
+      .card-actions {
+        width: 100%;
+      }
+      .card-actions > * {
+        width: 100%;
+      }
+      .button-link,
+      .revoke-toggle {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${body}
+  <script>
+    (() => {
+      document.addEventListener("click", (e) => {
+        const toggle = e.target.closest(".reveal-toggle");
+        if (toggle) {
+          const container = toggle.closest(".reveal-block");
+          if (!container) return;
+          const secret = container.querySelector(".reveal-secret");
+          if (!secret) return;
+          
+          const isHidden = secret.hasAttribute("hidden");
+          if (isHidden) {
+            secret.removeAttribute("hidden");
+            toggle.textContent = "Click to Hide";
+          } else {
+            secret.setAttribute("hidden", "");
+            toggle.textContent = "Click to Reveal";
+          }
+          return;
+        }
+      });
+
+      const flash = document.querySelector("[data-flash-message]");
+      if (flash) {
+        const dismiss = flash.querySelector("[data-dismiss-flash]");
+        if (dismiss) {
+          dismiss.addEventListener("click", () => {
+            flash.remove();
+          });
+        }
+      }
+
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("msg")) {
+        url.searchParams.delete("msg");
+        const next = url.pathname + (url.search ? url.search : "") + url.hash;
+        window.history.replaceState({}, "", next);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+function renderMessage(message) {
+  if (!message) {
+    return "";
+  }
+  return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
+}
+
+function renderLogin(message) {
+  return layout({
+    title: "Login",
+    body: `
+      <div class="login-shell">
+        <section class="hero">
+          <div>
+            <h1>Bitlab Admin</h1>
+            <p>Admin access panel</p>
+          </div>
+        </section>
+        ${renderMessage(message)}
+        <section class="panel">
+          <h2 class="section-title">Admin Login</h2>
+          <form method="post" action="/admin/login">
+            <label>Password
+              <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
+            </label>
+            <button type="submit">Sign In</button>
+          </form>
+        </section>
+      </div>
+    `,
+  });
+}
+
+function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetStatus, message }) {
+  const activeKeyCards = activeKeys
+    .map(
+      (key) => `
+        <article class="card" data-key-id="${key.id}">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+            <strong>${escapeHtml(key.name)}</strong>
+            <span data-key-live-indicator>${key.activeStreams > 0 ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
+          </div>
+          <div class="small">Created ${escapeHtml(key.created_at)}</div>
+          <div class="small" style="margin-top: 8px;">Status: <span data-key-status>${key.paused_at ? "Paused" : "Active"}</span></div>
+          <div class="small" style="margin-top: 8px;">Concurrent streams: <span data-key-active-streams>${key.activeStreams}</span> / ${escapeHtml(key.max_concurrent_streams)}</div>
+          <div class="small" style="margin-top: 8px;">4K access: ${key.allow_4k ? "true" : "false"}</div>
+          <div class="reveal-block" style="margin-top: 8px;">
+            <button type="button" class="reveal-toggle">Click to Reveal</button>
+            <div class="reveal-secret" hidden>
+              <div class="small" style="margin-top: 8px;"><code>${escapeHtml(key.token)}</code></div>
+              <div class="small" style="margin-top: 8px;">
+                <a class="manifest-link" href="${escapeHtml(baseUrl)}/${escapeHtml(key.token)}/manifest.json" target="_blank">${escapeHtml(
+                  baseUrl,
+                )}/${escapeHtml(key.token)}/manifest.json</a>
+              </div>
+            </div>
+          </div>
+          <div class="card-actions">
+            <a class="button-link" href="/admin/keys/${key.id}">Manage</a>
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+
+  const statusChip = bitmagnetStatus.ok === null
+    ? '<span class="chip">Loading…</span>'
+    : bitmagnetStatus.ok
+      ? '<span class="chip good">reachable</span>'
+      : '<span class="chip bad">unreachable</span>';
+
+  return layout({
+    title: "Admin Dashboard",
+    body: `
+      <div class="shell" data-dashboard>
+        <section class="hero">
+          <div>
+            <h1>Admin</h1>
+            <p>Manage addon keys and check the upstream connection.</p>
+          </div>
+          <div class="header-actions">
+            <form method="post" action="/admin/logout">
+              <button class="danger" type="submit">Logout</button>
+            </form>
+          </div>
+        </section>
+        ${renderMessage(message)}
+        <section class="stats">
+          <article class="stat">
+            <div class="eyebrow">Bitmagnet</div>
+            <div class="value" data-stat-bitmagnet-value>${bitmagnetStatus.ok === null ? "Loading…" : bitmagnetStatus.ok ? "Live" : "Down"}</div>
+            <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
+          </article>
+          <article class="stat">
+            <div class="eyebrow">Total Streams</div>
+            <div class="value" data-stat-total-streams>${totalActiveStreams}</div>
+            <div class="small">currently active</div>
+          </article>
+          <article class="stat">
+            <div class="eyebrow">Keys</div>
+            <div class="value">${escapeHtml(activeKeys.length)}</div>
+            <div class="small">active tokens</div>
+          </article>
+          <article class="stat">
+            <div class="eyebrow">Manifest</div>
+            <div class="value">Ready</div>
+            <div class="small"><code>${escapeHtml(baseUrl)}</code></div>
+          </article>
+        </section>
+        <section class="main-grid" style="margin-top: 16px;">
+          <div class="stack">
+            <article class="panel">
+              <h2 class="section-title">Create Key</h2>
+              <form method="post" action="/admin/keys">
+                <label>Key Name
+                  <input name="name" placeholder="Main install" required />
+                </label>
+                <button type="submit">Create Key</button>
+              </form>
+              <div class="small muted-block">Create a tokenized manifest for an install.</div>
+            </article>
+          </div>
+          <div class="stack">
+            <article class="panel">
+              <h2 class="section-title">Keys</h2>
+              <div class="list">${activeKeyCards || '<div class="small">No keys yet.</div>'}</div>
+            </article>
+          </div>
+        </section>
+      </div>
+      <script>
+        (() => {
+          if (!document.querySelector("[data-dashboard]")) return;
+
+          async function updateDashboard() {
+            try {
+              const res = await fetch("/admin/api/status");
+              if (!res.ok) return;
+              const data = await res.json();
+
+              // Update bitmagnet status
+              const bitVal = document.querySelector("[data-stat-bitmagnet-value]");
+              if (bitVal) bitVal.textContent = data.bitmagnet.ok ? "Live" : "Down";
+              const bitChip = document.querySelector("[data-stat-bitmagnet-chip]");
+              if (bitChip) {
+                bitChip.innerHTML = data.bitmagnet.ok
+                  ? '<span class="chip good">reachable</span>'
+                  : '<span class="chip bad">unreachable</span>';
+              }
+
+              // Update total streams
+              const totalVal = document.querySelector("[data-stat-total-streams]");
+              if (totalVal) totalVal.textContent = data.totalActiveStreams;
+
+              // Update and re-order key cards
+              const list = document.querySelector(".list");
+
+              data.activeKeys.forEach((key, index) => {
+                const card = document.querySelector(\`[data-key-id="\${key.id}"]\`);
+                if (!card) return;
+
+                const indicator = card.querySelector("[data-key-live-indicator]");
+                if (indicator) {
+                  indicator.innerHTML = key.activeStreams > 0
+                    ? '<span class="live-indicator" title="Active stream"></span>'
+                    : "";
+                }
+
+                const status = card.querySelector("[data-key-status]");
+                if (status) status.textContent = key.paused ? "Paused" : "Active";
+
+                const active = card.querySelector("[data-key-active-streams]");
+                if (active) active.textContent = key.activeStreams;
+
+                // Move card to its sorted position (always append to ensure correct order)
+                if (list) {
+                  list.appendChild(card);
+                }
+              });
+              if (data.activeKeys.length > 0) {
+                console.log("Dashboard updated and re-ordered", data.activeKeys.map(k => k.id));
+              }
+            } catch (err) {
+              console.error("Failed to update dashboard:", err);
+            }
+          }
+
+          setInterval(updateDashboard, 2000);
+        })();
+      </script>
+    `,
+  });
+}
+
+function renderKeyDetails({
+  baseUrl,
+  key,
+  activeStreams,
+  activePlaybackHashes = [],
+  watchHistory,
+  watchHistoryHasMore = false,
+  watchHistoryLimit = 5,
+  watchHistoryStep = 10,
+  message,
+  timezone,
+}) {
+  const formatTimestamp = createTimestampFormatter(timezone || "UTC");
+  const watchRows = watchHistory
+    .map((entry) => {
+      const episodeLabel =
+        Number.isInteger(entry.season) && Number.isInteger(entry.episode)
+          ? `S${String(entry.season).padStart(2, "0")}E${String(entry.episode).padStart(2, "0")}`
+          : "";
+
+      const isLive = activePlaybackHashes.includes(entry.playback_token_hash);
+
+      return `
+        <tr data-history-id="${entry.id}" data-playback-hash="${entry.playback_token_hash}">
+          <td>
+            <div style="display: flex; align-items: center;">
+              <span data-live-indicator-container>${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
+              <div>
+                <strong>${escapeHtml(entry.media_title)}</strong>
+                <div class="small">${escapeHtml(entry.media_type || "unknown")}${episodeLabel ? ` | ${escapeHtml(episodeLabel)}` : ""}</div>
+              </div>
+            </div>
+          </td>
+          <td>${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
+          <td>${entry.info_hash ? `<code>${escapeHtml(entry.info_hash)}</code>` : '<span class="small">n/a</span>'}</td>
+          <td>${escapeHtml(formatTimestamp(entry.watched_at))}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  const nextWatchHistoryLimit = watchHistoryLimit + watchHistoryStep;
+
+  return layout({
+    title: `Key ${key.name}`,
+    body: `
+      <div class="shell" data-key-details="${key.id}">
+        <section class="hero">
+          <div>
+            <h1>${escapeHtml(key.name)}</h1>
+            <p>Per-key stream limits and watch history.</p>
+          </div>
+          <div class="header-actions">
+            <a class="button-link" href="/admin">Back</a>
+            <form method="post" action="/admin/logout">
+              <button class="danger" type="submit">Logout</button>
+            </form>
+          </div>
+        </section>
+        ${renderMessage(message)}
+        <section class="kv">
+          <article class="card reveal-block">
+            <div class="eyebrow">Manifest</div>
+            <button type="button" class="reveal-toggle">Click to Reveal</button>
+            <div class="reveal-secret" style="margin-top: 8px;" hidden>
+              <div class="small">
+                <a class="manifest-link" href="${escapeHtml(baseUrl)}/${escapeHtml(key.token)}/manifest.json" target="_blank">${escapeHtml(baseUrl)}/${escapeHtml(key.token)}/manifest.json</a>
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="eyebrow">Current Streams</div>
+            <div class="value" data-key-active-streams>${escapeHtml(activeStreams)}</div>
+            <div class="small">active playback responses right now</div>
+          </article>
+        </section>
+        <section class="main-grid" style="margin-top: 16px;">
+          <div class="stack">
+            <article class="panel">
+              <h2 class="section-title">Concurrency Limit</h2>
+              <form method="post" action="/admin/keys/${key.id}/settings">
+                <label>Max concurrent streams
+                  <input type="number" min="1" step="1" name="maxConcurrentStreams" value="${escapeHtml(key.max_concurrent_streams)}" required />
+                </label>
+                <button type="submit">Save Limit</button>
+              </form>
+              <div class="small muted-block">This key is blocked when it already has the configured number of active streams.</div>
+            </article>
+            <article class="panel">
+              <h2 class="section-title">Access State</h2>
+              <div class="small">Current state: <span data-key-status-text>${key.paused_at ? `Paused since ${escapeHtml(key.paused_at)}` : "Active"}</span></div>
+              <form method="post" action="/admin/keys/${key.id}/${key.paused_at ? "resume" : "pause"}" style="margin-top: 12px;">
+                <button class="${key.paused_at ? "" : "danger"}" type="submit">${key.paused_at ? "Resume Key" : "Pause Key"}</button>
+              </form>
+              <form method="post" action="/admin/keys/${key.id}/4k-access" style="margin-top: 12px;">
+                <label class="checkbox-row">
+                  <input type="checkbox" name="allow4k" value="true" ${key.allow_4k ? "checked" : ""} />
+                  Allow 4K content
+                </label>
+                <button type="submit">Save 4K Access</button>
+              </form>
+            </article>
+            <article class="panel">
+              <h2 class="section-title">Key Details</h2>
+              <form method="post" action="/admin/keys/${key.id}/rename" style="margin-bottom: 12px;">
+                <label>Key Name
+                  <input name="name" value="${escapeHtml(key.name)}" required />
+                </label>
+                <button type="submit">Rename Key</button>
+              </form>
+              <div class="small">Created ${escapeHtml(key.created_at)}</div>
+              <div class="small" style="margin-top: 8px;">4K access: ${key.allow_4k ? "true" : "false"}</div>
+              <details class="revoke-details" style="margin-top: 12px;">
+                <summary><span class="revoke-toggle">Revoke</span></summary>
+                <form class="revoke-form" method="post" action="/admin/keys/${key.id}/revoke">
+                  <label class="small">
+                    Type <code>${escapeHtml(key.name)}</code> to revoke
+                    <input name="confirmName" placeholder="${escapeHtml(key.name)}" required />
+                  </label>
+                  <button class="danger" type="submit">Revoke Key</button>
+                </form>
+              </details>
+            </article>
+          </div>
+          <div class="stack">
+            <article class="panel">
+              <h2 class="section-title">Watch History</h2>
+              <div class="small" style="margin-bottom: 12px;">Displayed in ${escapeHtml(timezone || "UTC")}. Showing <span data-watch-history-count>${watchHistory.length}</span> most recent entr<span data-watch-history-plural>${watchHistory.length === 1 ? "y" : "ies"}</span>.</div>
+              <div data-watch-history-container>
+              ${
+                watchRows
+                  ? `<table>
+                      <thead>
+                        <tr>
+                          <th>Media</th>
+                          <th>Release</th>
+                          <th>Info Hash</th>
+                          <th>Watched At</th>
+                        </tr>
+                      </thead>
+                      <tbody data-watch-history-body>${watchRows}</tbody>
+                    </table>`
+                  : '<div class="small">No plays logged for this key yet.</div>'
+              }
+              </div>
+              ${
+                watchHistoryHasMore
+                  ? `<form method="get" action="/admin/keys/${key.id}" style="margin-top: 12px;">
+                      <input type="hidden" name="historyLimit" value="${escapeHtml(nextWatchHistoryLimit)}" />
+                      <button type="submit">See More</button>
+                    </form>`
+                  : ""
+              }
+            </article>
+          </div>
+        </section>
+      </div>
+      <script>
+        (() => {
+          const shell = document.querySelector("[data-key-details]");
+          if (!shell) return;
+          const keyId = shell.getAttribute("data-key-details");
+          const timezone = "${escapeHtml(timezone || "UTC")}";
+
+          function escapeHtml(value) {
+            return String(value || "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#39;");
+          }
+
+          function formatTimestamp(value) {
+            if (!value) return "";
+            try {
+              const isoValue = String(value).replace(" ", "T");
+              const parsed = new Date(isoValue.endsWith("Z") ? isoValue : \`\${isoValue}Z\`);
+              return new Intl.DateTimeFormat("en-US", {
+                timeZone: timezone,
+                year: "numeric", month: "2-digit", day: "2-digit",
+                hour: "2-digit", minute: "2-digit", second: "2-digit",
+                hour12: false, timeZoneName: "short"
+              }).format(parsed);
+            } catch (e) { return String(value); }
+          }
+
+          async function updateKeyDetails() {
+            try {
+              const url = new URL(\`/admin/api/keys/\${keyId}\`, window.location.origin);
+              const params = new URLSearchParams(window.location.search);
+              if (params.has("historyLimit")) {
+                url.searchParams.set("historyLimit", params.get("historyLimit"));
+              }
+
+              const res = await fetch(url);
+              if (!res.ok) return;
+              const data = await res.json();
+
+              const activeStreams = document.querySelector("[data-key-active-streams]");
+              if (activeStreams) activeStreams.textContent = data.activeStreams;
+
+              const statusText = document.querySelector("[data-key-status-text]");
+              if (statusText) statusText.textContent = data.paused ? "Paused" : "Active";
+
+              const watchHistoryBody = document.querySelector("[data-watch-history-body]");
+              const watchHistoryContainer = document.querySelector("[data-watch-history-container]");
+              const watchCount = document.querySelector("[data-watch-history-count]");
+              const watchPlural = document.querySelector("[data-watch-history-plural]");
+
+              if (data.watchHistory && data.watchHistory.length > 0) {
+                const activeHashes = data.activePlaybackHashes || [];
+                const rows = data.watchHistory.map(entry => {
+                  const episodeLabel = (Number.isInteger(entry.season) && Number.isInteger(entry.episode))
+                    ? \`S\${String(entry.season).padStart(2, "0")}E\${String(entry.episode).padStart(2, "0")}\`
+                    : "";
+                  
+                  const isLive = activeHashes.includes(entry.playback_token_hash);
+                  
+                  return \`
+                    <tr data-history-id="\${entry.id}" data-playback-hash="\${entry.playback_token_hash}">
+                      <td>
+                        <div style="display: flex; align-items: center;">
+                          <span data-live-indicator-container>\${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
+                          <div>
+                            <strong>\${escapeHtml(entry.media_title)}</strong>
+                            <div class="small">\${escapeHtml(entry.media_type || "unknown")}\${episodeLabel ? " | " + escapeHtml(episodeLabel) : ""}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>\${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
+                      <td>\${entry.info_hash ? "<code>" + escapeHtml(entry.info_hash) + "</code>" : '<span class="small">n/a</span>'}</td>
+                      <td>\${escapeHtml(formatTimestamp(entry.watched_at))}</td>
+                    </tr>
+                  \`;
+                }).join("");
+
+                if (watchHistoryBody) {
+                  watchHistoryBody.innerHTML = rows;
+                } else if (watchHistoryContainer) {
+                  watchHistoryContainer.innerHTML = \`
+                    <table>
+                      <thead>
+                        <tr><th>Media</th><th>Release</th><th>Info Hash</th><th>Watched At</th></tr>
+                      </thead>
+                      <tbody data-watch-history-body>\${rows}</tbody>
+                    </table>
+                  \`;
+                }
+
+                if (watchCount) watchCount.textContent = data.watchHistory.length;
+                if (watchPlural) watchPlural.textContent = data.watchHistory.length === 1 ? "y" : "ies";
+              }
+            } catch (err) {
+              console.error("Failed to update key details:", err);
+            }
+          }
+
+          setInterval(updateKeyDetails, 2000);
+        })();
+      </script>
+    `,
+  });
+}
+
+module.exports = {
+  renderLogin,
+  renderDashboard,
+  renderKeyDetails,
+};

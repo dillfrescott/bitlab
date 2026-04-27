@@ -1,0 +1,10 @@
+flags:
+  delete_content_types:
+    - music
+    - ebook
+    - comic
+    - audiobook
+    - software
+    - game
+    - xxx
+    - unknown
