@@ -209,6 +209,10 @@ function openDatabase(config) {
       DELETE FROM key_watch_history
       WHERE key_id = ?
     `),
+    deleteOldWatchHistory: db.prepare(`
+      DELETE FROM key_watch_history
+      WHERE watched_at < datetime('now', '-30 days')
+    `),
     insertWatchHistory: db.prepare(`
       INSERT OR IGNORE INTO key_watch_history (
         key_id,
@@ -237,6 +241,7 @@ function openDatabase(config) {
         watched_at
       FROM key_watch_history
       WHERE key_id = ?
+        AND watched_at >= datetime('now', '-30 days')
       ORDER BY watched_at DESC, id DESC
       LIMIT ?
     `),
@@ -523,6 +528,9 @@ function openDatabase(config) {
     },
     getWatchHistoryForKey(keyId, limit = 100) {
       return stmts.getWatchHistoryForKey.all(keyId, limit);
+    },
+    deleteOldWatchHistory() {
+      return stmts.deleteOldWatchHistory.run();
     },
     noteDiscovery(infoHash, source) {
       stmts.noteDiscovery.run(infoHash, source);

@@ -28,6 +28,21 @@ const STREAM_TRACKER_SWEEP_MS = config.streamTrackerSweepMs;
 const STREAM_TRACKER_STALE_MS = config.streamTrackerStaleMs;
 let nextTrackedConnectionId = 1;
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+function runWatchHistoryCleanup() {
+  try {
+    const result = db.deleteOldWatchHistory();
+    if (result.changes > 0) {
+      console.log(`[cleanup] Removed ${result.changes} watch history entries older than 30 days`);
+    }
+  } catch (error) {
+    console.error(`[cleanup] Failed to delete old watch history: ${error.message}`);
+  }
+}
+
+runWatchHistoryCleanup();
+setInterval(runWatchHistoryCleanup, ONE_DAY_MS);
+
 function hashPlaybackToken(token) {
   return crypto.createHash("sha256").update(String(token || "")).digest("hex");
 }
