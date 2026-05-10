@@ -943,33 +943,32 @@ async function loadMedia(bitmagnet, cache, pendingCache, id, type, options = {})
       return null;
     }
 
-    const media = await bitmagnet.resolveByExternalId(type, externalIds);
-    if (media) {
-      let resolvedMedia = media;
-      if (type === "series") {
-        const fallbackMedia = await findTitleFallbackMedia(bitmagnet, type, id, {
+    let media;
+    let fallbackMedia;
+
+    if (type === "series") {
+      [media, fallbackMedia] = await Promise.all([
+        bitmagnet.resolveByExternalId(type, externalIds),
+        findTitleFallbackMedia(bitmagnet, type, id, {
+          keyToken: options.keyToken,
+        }),
+      ]);
+    } else {
+      media = await bitmagnet.resolveByExternalId(type, externalIds);
+      if (!media) {
+        fallbackMedia = await findTitleFallbackMedia(bitmagnet, type, id, {
           keyToken: options.keyToken,
         });
-        if (fallbackMedia) {
-          resolvedMedia = mergeMediaCollections([media, fallbackMedia]) || media;
-          console.log(
-            `[addon] external-id merged media type=${type} id=${JSON.stringify(id)} exactReleases=${media.releases.length} mergedReleases=${resolvedMedia.releases.length}`,
-          );
-        }
       }
-      cacheMediaAliases(cache, resolvedMedia);
-      console.log(
-        `[addon] external-id media loaded type=${type} id=${JSON.stringify(id)} title=${JSON.stringify(resolvedMedia.title)} imdb=${JSON.stringify(resolvedMedia.imdbId || "")} tmdb=${JSON.stringify(resolvedMedia.tmdbId || "")} releases=${resolvedMedia.releases.length}`,
-      );
-      return resolvedMedia;
     }
 
-    const fallbackMedia = await findTitleFallbackMedia(bitmagnet, type, id, {
-      keyToken: options.keyToken,
-    });
-    if (fallbackMedia) {
-      cacheMediaAliases(cache, fallbackMedia);
-      return fallbackMedia;
+    if (media || fallbackMedia) {
+      const resolvedMedia = mergeMediaCollections([media, fallbackMedia].filter(Boolean)) || media || fallbackMedia;
+      cacheMediaAliases(cache, resolvedMedia);
+      console.log(
+        `[addon] external-id media loaded type=${type} id=${JSON.stringify(id)} title=${JSON.stringify(resolvedMedia.title)} imdb=${JSON.stringify(resolvedMedia.imdbId || "")} tmdb=${JSON.stringify(resolvedMedia.tmdbId || "")} releases=${resolvedMedia.releases.length} from=${media ? "exact" : ""}${media && fallbackMedia ? "+" : ""}${fallbackMedia ? "fallback" : ""}`,
+      );
+      return resolvedMedia;
     }
 
     console.log(

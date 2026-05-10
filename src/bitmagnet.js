@@ -746,29 +746,33 @@ function createBitmagnetService(config) {
     }
 
     const lookupLimit = 100;
-    const torznabResponse = await fetchWithTimeout(buildTorznabUrl(type, "", lookupLimit, { imdbId, tmdbId }), {
-      headers: {
-        Accept: "application/xml, text/xml;q=0.9, */*;q=0.1",
-      },
-    }, `torznab-external:${type}:${imdbId || tmdbId}`).catch(() => null);
 
-    let items = [];
-    if (torznabResponse && torznabResponse.ok) {
-      const body = await torznabResponse.text();
-      items = await groupResults(type, parseItems(body), { retainAllReleases: true });
-    }
+    const [torznabItems, graphqlItems] = await Promise.all([
+      (async () => {
+        const torznabResponse = await fetchWithTimeout(buildTorznabUrl(type, "", lookupLimit, { imdbId, tmdbId }), {
+          headers: {
+            Accept: "application/xml, text/xml;q=0.9, */*;q=0.1",
+          },
+        }, `torznab-external:${type}:${imdbId || tmdbId}`).catch(() => null);
 
-    const graphqlItems = await searchWithFiles(type, imdbId ? `tt${imdbId}` : tmdbId, lookupLimit, { retainAllReleases: true }).catch(() => []);
-    const combined = [...items, ...graphqlItems];
-    const deduped = [];
+        if (torznabResponse && torznabResponse.ok) {
+          const body = await torznabResponse.text();
+          return groupResults(type, parseItems(body), { retainAllReleases: true });
+        }
+        return [];
+      })(),
+      searchWithFiles(type, imdbId ? `tt${imdbId}` : tmdbId, lookupLimit, { retainAllReleases: true }).catch(() => []),
+    ]);
+
+    const combined = [...torznabItems, ...graphqlItems];
+    const items = [];
     const seenIds = new Set();
     for (const item of combined) {
       if (!seenIds.has(item.id)) {
         seenIds.add(item.id);
-        deduped.push(item);
+        items.push(item);
       }
     }
-    items = deduped;
 
     console.log(
       `[bitmagnet] external-id lookup type=${type} imdb=${JSON.stringify(imdbId || "")} tmdb=${JSON.stringify(tmdbId || "")} groups=${items.length}`,
