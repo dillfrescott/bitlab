@@ -211,7 +211,8 @@ function filterReleasesForKeyAccess(releases, options = {}) {
 }
 
 function getReleaseIdentityKey(release) {
-  const sourceId = release.infoHash || release.magnetUri || release.releaseName || "";
+  const rawId = release.infoHash || release.magnetUri || release.releaseName || "";
+  const sourceId = String(rawId).toLowerCase();
   const season = Number.isInteger(release.season) ? release.season : -1;
   const episode = Number.isInteger(release.episode) ? release.episode : -1;
 
@@ -448,7 +449,7 @@ async function fetchCinemetaFallback(type, id) {
   }
 }
 
-const SERIES_PACK_INSPECT_TIMEOUT_MS = 120000;
+const SERIES_PACK_INSPECT_TIMEOUT_MS = 20000;
 
 function dedupeMediaGroups(items) {
   const values = Array.isArray(items) ? items.filter(Boolean) : [];
@@ -690,6 +691,22 @@ function mergeReleaseLists(left, right) {
   ])?.releases || [];
 }
 
+const SEARCH_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
+const searchResultCache = new Map();
+
+async function runCachedFallbackSearch(bitmagnet, type, query, options = {}) {
+  const cacheKey = `${type}:${query}:${options.keyToken || "_global"}`;
+  const cached = searchResultCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
+    console.log(`[addon] search cache hit query=${JSON.stringify(query)}`);
+    return cached.results;
+  }
+
+  const results = await runFallbackSearch(bitmagnet, type, query, options);
+  searchResultCache.set(cacheKey, { results, at: Date.now() });
+  return results;
+}
+
 async function searchEpisodeFallback(bitmagnet, media, season, episode, options = {}) {
   if (!media?.title || !Number.isInteger(season) || !Number.isInteger(episode)) {
     return null;
@@ -705,7 +722,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
 
   const allResults = await Promise.all(
     queries.map((query) =>
-      runFallbackSearch(bitmagnet, "series", query, {
+      runCachedFallbackSearch(bitmagnet, "series", query, {
         keyToken: options.keyToken,
         watchHistory: Array.isArray(options.watchHistory) ? options.watchHistory : [],
         limit: 20,
@@ -839,7 +856,7 @@ function selectPendingSeriesPacks(media, options = {}) {
       ((Number.isFinite(right.sizeBytes) ? right.sizeBytes : 0) - (Number.isFinite(left.sizeBytes) ? left.sizeBytes : 0));
   });
 
-  const selected = targetedRequest ? pending.slice(0, 3) : pending;
+  const selected = targetedRequest ? pending.slice(0, 3) : pending.slice(0, 10);
   return selected.map(release => ({
     ...release,
     magnetUri: release.magnetUri || `magnet:?xt=urn:btih:${release.infoHash}`,
@@ -853,6 +870,8 @@ async function expandSeriesMedia(media, torrentService, options = {}) {
 
   const targetSeason = Number.isInteger(options.season) ? options.season : null;
   const targetEpisode = Number.isInteger(options.episode) ? options.episode : null;
+  const targetedRequest = targetSeason !== null && targetEpisode !== null;
+
   const needsExpansion = media.releases.some(
     (release) => Number.isInteger(release.season) && !Number.isInteger(release.episode),
   );
@@ -860,51 +879,101 @@ async function expandSeriesMedia(media, torrentService, options = {}) {
     return media;
   }
 
-  let releases = media.releases.slice();
   const pending = selectPendingSeriesPacks(media, options);
+  if (pending.length === 0) {
+    return media;
+  }
 
-  for (const release of pending) {
-    if (
-      targetSeason !== null &&
-      targetEpisode !== null &&
-      hasEpisodeMatch({ ...media, releases }, targetSeason, targetEpisode)
-    ) {
-      break;
-    }
+  const timeoutMs = targetedRequest ? 15000 : SERIES_PACK_INSPECT_TIMEOUT_MS;
+  let releases = media.releases.slice();
 
+  // Create an array of expansion tasks
+  const tasks = pending.map(async (release) => {
     try {
-      console.log(
-        `[addon] expanding series pack title=${JSON.stringify(media.title)} infoHash=${JSON.stringify(release.infoHash || "")} release=${JSON.stringify(release.releaseName)}`,
-      );
       const inspected = await torrentService.inspectMagnet(release.magnetUri, {
         removeAfterInspect: true,
-        timeoutMs: SERIES_PACK_INSPECT_TIMEOUT_MS,
+        timeoutMs,
       });
       const expanded = await mergeSeriesReleases(releases, inspected, release);
-      console.log(
-        `[addon] expanded series pack title=${JSON.stringify(media.title)} infoHash=${JSON.stringify(inspected.infoHash || release.infoHash || "")} files=${Array.isArray(inspected.files) ? inspected.files.length : 0} releasesBefore=${releases.length} releasesAfter=${expanded.length}`,
-      );
-      const expandedImprovedTarget =
-        targetSeason !== null &&
-        targetEpisode !== null &&
-        hasEpisodeMatch({ ...media, releases: expanded }, targetSeason, targetEpisode) &&
-        !hasEpisodeMatch({ ...media, releases }, targetSeason, targetEpisode);
-      const expandedImprovedEpisodes =
-        countEpisodicReleases(expanded) > countEpisodicReleases(releases);
-
-      if (expanded.length > releases.length || expandedImprovedTarget || expandedImprovedEpisodes) {
-        releases = expanded;
-      }
+      return { release, inspected, expanded };
     } catch (error) {
       console.error(
         `[addon] series pack expansion failed title=${JSON.stringify(media.title)} infoHash=${JSON.stringify(release.infoHash || "")} error=${JSON.stringify(error.message)}`,
       );
+      return null;
+    }
+  });
+
+  if (targetedRequest) {
+    // For targeted requests, we want to return as soon as we have A match,
+    // but we still want to benefit from other parallel results if they finish fast.
+    const results = [];
+    const internalReleases = new Set(releases.map(getReleaseIdentityKey));
+    let foundTarget = false;
+
+    await new Promise((resolve) => {
+      let finishedCount = 0;
+      let targetMatches = 0;
+
+      tasks.forEach(async (task) => {
+        const result = await task;
+        finishedCount += 1;
+
+        if (result) {
+          results.push(result);
+          // Count how many packs specifically have our target
+          const hasTarget = result.expanded.some(
+            (r) => r.season === targetSeason && r.episode === targetEpisode
+          );
+          if (hasTarget) {
+            targetMatches += 1;
+            foundTarget = true;
+          }
+        }
+
+        if (targetMatches >= 2 || finishedCount === tasks.length) {
+          resolve();
+        }
+      });
+    });
+
+    // Merge all results we got before resolving
+    for (const result of results) {
+      for (const r of result.expanded) {
+        const key = getReleaseIdentityKey(r);
+        if (!internalReleases.has(key)) {
+          internalReleases.add(key);
+          releases.push(r);
+        }
+      }
+    }
+
+    if (foundTarget) {
+      console.log(
+        `[addon] parallel expansion found target title=${JSON.stringify(media.title)} target=S${targetSeason}E${targetEpisode}`,
+      );
+    }
+  } else {
+    // For non-targeted requests (warming), wait for all to finish in parallel
+    const expansionResults = await Promise.allSettled(tasks);
+    for (const result of expansionResults) {
+      if (result.status === "fulfilled" && result.value) {
+        const { expanded } = result.value;
+        const currentKeys = new Set(releases.map(getReleaseIdentityKey));
+        for (const r of expanded) {
+          const key = getReleaseIdentityKey(r);
+          if (!currentKeys.has(key)) {
+            currentKeys.add(key);
+            releases.push(r);
+          }
+        }
+      }
     }
   }
 
   return {
     ...media,
-    releases,
+    releases: dedupeReleases(releases),
   };
 }
 
@@ -1270,6 +1339,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
         `[addon] series stream match title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} matched=${releases.length} totalReleases=${media.releases.length}`,
       );
     }
+
     const streams = releases.flatMap((release) => {
       const token = createPlaybackToken({
         keyToken: args.config.keyToken,

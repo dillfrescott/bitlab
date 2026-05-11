@@ -4,14 +4,14 @@ const path = require("node:path");
 const dataDir = path.resolve(process.cwd(), "data");
 const torrentCacheDir = "/tmp/webtorrent";
 const defaultTorrentCacheReserveGb = 20;
-const defaultTorrentIdleGraceMs = 1000 * 60 * 2;
+const defaultTorrentIdleGraceMs = 1000 * 60 * 5;
 const defaultTorrentSweepIntervalMs = 60000;
 const defaultStreamTrackerSweepMs = 5000;
-const defaultStreamTrackerStaleMs = 1000 * 60 * 10;
+const defaultStreamTrackerStaleMs = 1000 * 60 * 60;
 const defaultTorrentTrackerListUrl =
   "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
 const defaultTorrentTrackerRefreshMs = 1000 * 60 * 60 * 6;
-const defaultTorrentMaxConns = 200;
+const defaultTorrentMaxConns = 500;
 
 function parsePositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -74,7 +74,7 @@ function getConfig() {
     sessionTtlMs: 1000 * 60 * 60 * 12,
     streamTokenTtlMs: 1000 * 60 * 60 * 4,
     catalogPageSize: 50,
-    metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 120),
+    metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 30),
     torrentPort: Number(process.env.TORRENT_PORT || 16555),
     torrentMaxConns: Math.max(
       50,

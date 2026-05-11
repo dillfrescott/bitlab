@@ -236,6 +236,7 @@ function createTorrentService(config) {
   let cacheSweepTimer = null;
   let cacheSweepRunning = false;
   const torrentCache = new Map();
+  const inspectionCache = new Map();
   const torrentState = new Map();
   const trackerState = {
     trackers: [],
@@ -823,10 +824,24 @@ function createTorrentService(config) {
     const enrichedMagnetUri = enrichMagnetUri(magnetUri, trackers);
     const infoHash = extractInfoHash(enrichedMagnetUri);
     const cacheKey = infoHash || magnetUri;
+
     const existing = findExistingTorrent(client, enrichedMagnetUri, infoHash);
     if (existing) {
       cancelTorrentCleanup(existing, enrichedMagnetUri);
       markTorrentTouched(existing, enrichedMagnetUri);
+
+      if (!existing.ready && Array.isArray(trackers)) {
+        for (const tr of trackers) {
+          try {
+            if (typeof existing.addTracker === "function") {
+              existing.addTracker(tr);
+            }
+          } catch (_err) {
+            // ignore duplicate trackers
+          }
+        }
+      }
+
       log("reusing existing torrent", {
         infoHash: existing.infoHash || infoHash,
         ready: Boolean(existing.ready),
@@ -842,15 +857,32 @@ function createTorrentService(config) {
     }
 
     const pending = new Promise((resolve, reject) => {
-      const torrent = client.add(enrichedMagnetUri);
+      let torrent;
+      try {
+        torrent = client.add(enrichedMagnetUri);
+      } catch (error) {
+        const duplicateMatch = String(error && error.message || "").match(/Cannot add duplicate torrent ([a-f0-9]{40})/i);
+        if (duplicateMatch) {
+          const duplicate = findExistingTorrent(client, enrichedMagnetUri, duplicateMatch[1].toLowerCase());
+          if (duplicate) {
+            resolve(waitForTorrentReady(duplicate));
+            return;
+          }
+        }
+        log("client.add failed", { infoHash, error: error.message });
+        reject(error);
+        return;
+      }
+
       let progressLogAt = 0;
       cancelTorrentCleanup(torrent, enrichedMagnetUri);
       markTorrentTouched(torrent, enrichedMagnetUri);
 
+      const queryIndex = enrichedMagnetUri.indexOf("?");
       log("adding torrent", {
         infoHash,
         cacheKey,
-        trackerCount: new URLSearchParams(enrichedMagnetUri.slice("magnet:?".length)).getAll("tr").length,
+        trackerCount: queryIndex !== -1 ? new URLSearchParams(enrichedMagnetUri.slice(queryIndex)).getAll("tr").length : 0,
       });
 
       torrent.on("warning", (warning) => {
@@ -904,14 +936,6 @@ function createTorrentService(config) {
           infoHash: torrent.infoHash || infoHash,
           error: error.message,
         });
-        const duplicateMatch = String(error && error.message || "").match(/Cannot add duplicate torrent ([a-f0-9]{40})/i);
-        if (duplicateMatch) {
-          const duplicate = findExistingTorrent(client, enrichedMagnetUri, duplicateMatch[1].toLowerCase());
-          if (duplicate) {
-            resolve(waitForTorrentReady(duplicate));
-            return;
-          }
-        }
         reject(error);
       };
       const onReady = () => {
@@ -942,37 +966,61 @@ function createTorrentService(config) {
   }
 
   async function inspectMagnet(magnetUri, options = {}) {
-    const timeoutMs = options.timeoutMs || config.metadataTimeoutMs || 45000;
-    const torrent = await Promise.race([
-      getTorrent(magnetUri, { inspectOnly: true }),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`Metadata fetch timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-    const file = chooseFile(torrent);
-    const result = {
-      infoHash: torrent.infoHash,
-      torrentName: torrent.name,
-      fileIndex: file ? torrent.files.indexOf(file) : null,
-      fileName: file ? file.name : null,
-      sizeBytes: file ? file.length : null,
-      files: torrent.files.map((entry, index) => ({
-        index,
-        name: entry.name,
-        sizeBytes: entry.length,
-      })),
-    };
-    if (options.removeAfterInspect) {
-      const client = await getClient();
-      const removeTarget = torrent.magnetURI || torrent.magnetUri || torrent.infoHash || magnetUri;
-      await removeTorrent(client, removeTarget, torrent);
-      pruneEmptyCacheDirectories("inspect-remove");
-      torrentState.delete(getTorrentKey(torrent, magnetUri));
+    const infoHash = extractInfoHash(magnetUri);
+    if (infoHash && inspectionCache.has(infoHash)) {
+      const cached = inspectionCache.get(infoHash);
+      if (Date.now() - (cached.at || 0) < 1000 * 60 * 60 * 24) {
+        log("using cached inspection result", { infoHash });
+        return cached.result;
+      }
+      inspectionCache.delete(infoHash);
     }
-    return result;
+
+    const timeoutMs = options.timeoutMs || config.metadataTimeoutMs || 60000;
+    const startAt = Date.now();
+    let torrent;
+    try {
+      torrent = await Promise.race([
+        getTorrent(magnetUri, { inspectOnly: true }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Metadata fetch timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+      const durationMs = Date.now() - startAt;
+      const file = chooseFile(torrent);
+      const result = {
+        infoHash: torrent.infoHash,
+        torrentName: torrent.name,
+        fileIndex: file ? torrent.files.indexOf(file) : null,
+        fileName: file ? file.name : null,
+        sizeBytes: file ? file.length : null,
+        files: torrent.files.map((entry, index) => ({
+          index,
+          name: entry.name,
+          sizeBytes: entry.length,
+        })),
+      };
+      log("inspection complete", { infoHash: torrent.infoHash, durationMs });
+      if (infoHash && result) {
+        inspectionCache.set(infoHash, { result, at: Date.now() });
+      }
+      return result;
+    } finally {
+      if (options.removeAfterInspect) {
+        const client = await getClient();
+        const infoHash = extractInfoHash(magnetUri);
+        const target = torrent || findExistingTorrent(client, magnetUri, infoHash);
+        if (target) {
+          const removeTarget = target.magnetURI || target.magnetUri || target.infoHash || magnetUri;
+          await removeTorrent(client, removeTarget, target);
+          pruneEmptyCacheDirectories("inspect-remove");
+          torrentState.delete(getTorrentKey(target, magnetUri));
+        }
+      }
+    }
   }
 
-  async function getTorrentWithTimeout(magnetUri, timeoutMs = config.metadataTimeoutMs || 45000) {
+  async function getTorrentWithTimeout(magnetUri, timeoutMs = config.metadataTimeoutMs || 90000) {
     return Promise.race([
       getTorrent(magnetUri),
       new Promise((_, reject) => {
