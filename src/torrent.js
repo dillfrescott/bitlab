@@ -326,7 +326,7 @@ function createTorrentService(config) {
 
     trackerState.refreshPromise = (async () => {
       try {
-        const response = await fetch(listUrl);
+        const response = await fetch(listUrl, { signal: AbortSignal.timeout(10000) });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

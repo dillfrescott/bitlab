@@ -424,6 +424,7 @@ async function fetchCinemetaFallback(type, id) {
       headers: {
         Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
       },
+      signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) {
       console.log(`[addon] cinemeta fallback miss type=${type} id=${JSON.stringify(id)} http=${response.status}`);

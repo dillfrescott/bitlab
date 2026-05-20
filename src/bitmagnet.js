@@ -1,4 +1,4 @@
-const { extractTitleAndYear, normalizeKey } = require("./classify");
+const { extractTitleAndYear, normalizeKey, isVideoFile } = require("./classify");
 const { parseEpisodeLocal, curateSearchResults } = require("./discovery");
 const crypto = require("node:crypto");
 
