@@ -35,7 +35,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - TMDB_API_KEY=${TMDB_API_KEY}
       - PROCESSOR_CONCURRENCY=4
-      - DHT_CRAWLER_SCALING_FACTOR=10
+      - DHT_CRAWLER_SCALING_FACTOR=4
     volumes:
       - ./config/bitmagnet:/root/.config/bitmagnet
     command:
