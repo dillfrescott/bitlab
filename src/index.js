@@ -505,6 +505,100 @@ app.get("/admin/api/status", requireAdmin, async (req, res) => {
   });
 });
 
+async function proxyToBitmagnet(req, res, targetPath) {
+  const { Readable } = require("node:stream");
+  const targetUrl = new URL(targetPath, "http://localhost:3333");
+
+  try {
+    const headers = { ...req.headers };
+    delete headers.host;
+    delete headers.connection;
+    delete headers["content-length"];
+
+    let body = undefined;
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      if (req.body && Object.keys(req.body).length > 0) {
+        if (req.is("json")) {
+          body = JSON.stringify(req.body);
+        } else if (req.is("application/x-www-form-urlencoded")) {
+          body = new URLSearchParams(req.body).toString();
+        } else {
+          body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+        }
+      }
+    }
+
+    const response = await fetch(targetUrl.toString(), {
+      method: req.method,
+      headers,
+      body,
+      redirect: "manual",
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      let html = await response.text();
+      // Dynamically align the base href to the proxy's current request path
+      const baseHref = req.path.endsWith("/") ? req.path : `${req.path}/`;
+      html = html.replace(/<base href="[^"]*"/, `<base href="${baseHref}"`);
+
+      res.status(response.status);
+      response.headers.forEach((value, key) => {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === "location") {
+          const rewritten = value.startsWith("/") ? `/admin/bitmagnet${value}` : value;
+          res.setHeader(key, rewritten);
+        } else if (
+          lowerKey !== "content-encoding" &&
+          lowerKey !== "content-length"
+        ) {
+          res.setHeader(key, value);
+        }
+      });
+      res.send(html);
+    } else {
+      res.status(response.status);
+      response.headers.forEach((value, key) => {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === "location") {
+          const rewritten = value.startsWith("/") ? `/admin/bitmagnet${value}` : value;
+          res.setHeader(key, rewritten);
+        } else if (lowerKey !== "content-encoding") {
+          res.setHeader(key, value);
+        }
+      });
+
+      if (response.body) {
+        Readable.fromWeb(response.body).pipe(res);
+      } else {
+        res.end();
+      }
+    }
+  } catch (error) {
+    console.error(`[bitmagnet-proxy] Error proxying ${req.method} ${req.originalUrl}:`, error);
+    res.status(502).send("Bad Gateway: Error proxying request to bitmagnet");
+  }
+}
+
+app.all("/admin/bitmagnet{/*splat}", requireAdmin, async (req, res) => {
+  if (req.path === "/admin/bitmagnet") {
+    const query = req.originalUrl.includes("?")
+      ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
+      : "";
+    return res.redirect(`/admin/bitmagnet/${query}`);
+  }
+  const proxiedPath = req.originalUrl.replace(/^\/admin\/bitmagnet/, "") || "/";
+  proxyToBitmagnet(req, res, proxiedPath);
+});
+
+app.all("/graphql", requireAdmin, async (req, res) => {
+  proxyToBitmagnet(req, res, req.originalUrl);
+});
+
+app.all("/api/*splat", requireAdmin, async (req, res) => {
+  proxyToBitmagnet(req, res, req.originalUrl);
+});
+
 app.get("/admin", (req, res) => {
   const cookies = parseCookies(req);
   if (!verifySession(cookies.admin_session, config.sessionSecret)) {

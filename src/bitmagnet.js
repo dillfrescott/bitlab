@@ -681,8 +681,16 @@ function createBitmagnetService(config) {
     }
   }
 
+  function buildBitmagnetUrl(subpath) {
+    const base = new URL(config.bitmagnetUrl);
+    const basePath = base.pathname.replace(/\/$/, "");
+    const targetSubpath = subpath.startsWith("/") ? subpath : `/${subpath}`;
+    base.pathname = `${basePath}${targetSubpath}`;
+    return base;
+  }
+
   function buildTorznabUrl(type, query, limit, externalIds = {}) {
-    const url = new URL(config.bitmagnetTorznabPath, config.bitmagnetUrl);
+    const url = buildBitmagnetUrl(config.bitmagnetTorznabPath);
     url.searchParams.set("limit", String(limit));
     url.searchParams.set("cat", (TORZNAB_CATEGORIES[type] || []).join(","));
 
@@ -840,7 +848,7 @@ function createBitmagnetService(config) {
     }
 
     const contentType = type === "series" ? "tv_show" : "movie";
-    const response = await fetchWithTimeout(new URL("/graphql", config.bitmagnetUrl), {
+    const response = await fetchWithTimeout(buildBitmagnetUrl("/graphql"), {
       method: "POST",
       headers: {
         Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
@@ -884,13 +892,13 @@ function createBitmagnetService(config) {
   async function getStatus() {
     const startedAt = new Date().toISOString();
     try {
-      const response = await fetchWithTimeout(new URL("/", config.bitmagnetUrl), { redirect: "manual" }, "status");
+      const response = await fetchWithTimeout(buildBitmagnetUrl("/"), { redirect: "manual" }, "status");
       return {
         ok: response.status < 500,
         httpStatus: response.status,
         startedAt,
         webUiUrl: config.bitmagnetWebUiUrl,
-        torznabUrl: new URL(config.bitmagnetTorznabPath, config.bitmagnetUrl).toString(),
+        torznabUrl: buildBitmagnetUrl(config.bitmagnetTorznabPath).toString(),
       };
     } catch (error) {
       return {
@@ -898,7 +906,7 @@ function createBitmagnetService(config) {
         httpStatus: null,
         startedAt,
         webUiUrl: config.bitmagnetWebUiUrl,
-        torznabUrl: new URL(config.bitmagnetTorznabPath, config.bitmagnetUrl).toString(),
+        torznabUrl: buildBitmagnetUrl(config.bitmagnetTorznabPath).toString(),
         error: error.message,
       };
     }

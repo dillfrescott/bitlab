@@ -360,9 +360,9 @@ function layout({ title, body }) {
     }
     .header-actions .button-link,
     .header-actions button {
-      width: 112px;
       min-width: 112px;
-      padding: 12px;
+      padding: 12px 16px;
+      white-space: nowrap;
     }
     .muted-block {
       padding-top: 16px;
@@ -640,6 +640,7 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
             <p>Manage addon keys and check the upstream connection.</p>
           </div>
           <div class="header-actions">
+            <a class="button-link" href="/admin/bitmagnet/" target="_blank">Bitmagnet UI</a>
             <form method="post" action="/admin/logout">
               <button class="danger" type="submit">Logout</button>
             </form>
@@ -647,11 +648,13 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
         </section>
         ${renderMessage(message)}
         <section class="stats">
-          <article class="stat">
-            <div class="eyebrow">Bitmagnet</div>
-            <div class="value" data-stat-bitmagnet-value>${bitmagnetStatus.ok === null ? "Loading…" : bitmagnetStatus.ok ? "Live" : "Down"}</div>
-            <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
-          </article>
+          <a href="/admin/bitmagnet/" style="text-decoration: none; color: inherit;" target="_blank">
+            <article class="stat" style="cursor: pointer;">
+              <div class="eyebrow">Bitmagnet</div>
+              <div class="value" data-stat-bitmagnet-value>${bitmagnetStatus.ok === null ? "Loading…" : bitmagnetStatus.ok ? "Live" : "Down"}</div>
+              <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
+            </article>
+          </a>
           <article class="stat">
             <div class="eyebrow">Total Streams</div>
             <div class="value" data-stat-total-streams>${totalActiveStreams}</div>
