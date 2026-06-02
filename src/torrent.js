@@ -668,16 +668,18 @@ function createTorrentService(config) {
     });
   }, 0);
 
-  function removeTorrent(client, magnetUri, torrent = null) {
+  function removeTorrent(client, magnetUri, torrent = null, deleteFiles = false) {
     return new Promise((resolve) => {
       const finish = () => {
-        const removedPaths = getTorrentCachePaths(torrent, magnetUri)
-          .filter((candidate) => removePathIfExists(candidate));
-        if (removedPaths.length > 0) {
-          log("removed torrent cache paths", {
-            infoHash: torrent?.infoHash || extractInfoHash(magnetUri),
-            removedPaths,
-          });
+        if (deleteFiles) {
+          const removedPaths = getTorrentCachePaths(torrent, magnetUri)
+            .filter((candidate) => removePathIfExists(candidate));
+          if (removedPaths.length > 0) {
+            log("removed torrent cache paths", {
+              infoHash: torrent?.infoHash || extractInfoHash(magnetUri),
+              removedPaths,
+            });
+          }
         }
         resolve();
       };
@@ -688,7 +690,7 @@ function createTorrentService(config) {
       }
 
       try {
-        client.remove(magnetUri, { destroyStore: true }, finish);
+        client.remove(magnetUri, { destroyStore: deleteFiles }, finish);
       } catch (_error) {
         client.remove(magnetUri, finish);
       }
@@ -859,7 +861,8 @@ function createTorrentService(config) {
     const pending = new Promise((resolve, reject) => {
       let torrent;
       try {
-        torrent = client.add(enrichedMagnetUri);
+        const pathOptions = infoHash ? { path: path.join(downloadsPath, infoHash) } : {};
+        torrent = client.add(enrichedMagnetUri, pathOptions);
       } catch (error) {
         const duplicateMatch = String(error && error.message || "").match(/Cannot add duplicate torrent ([a-f0-9]{40})/i);
         if (duplicateMatch) {
@@ -1012,7 +1015,7 @@ function createTorrentService(config) {
         const target = torrent || findExistingTorrent(client, magnetUri, infoHash);
         if (target) {
           const removeTarget = target.magnetURI || target.magnetUri || target.infoHash || magnetUri;
-          await removeTorrent(client, removeTarget, target);
+          await removeTorrent(client, removeTarget, target, true);
           pruneEmptyCacheDirectories("inspect-remove");
           torrentState.delete(getTorrentKey(target, magnetUri));
         }

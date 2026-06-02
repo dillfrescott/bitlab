@@ -7,7 +7,7 @@ const defaultTorrentCacheReserveGb = 20;
 const defaultTorrentIdleGraceMs = 1000 * 60 * 5;
 const defaultTorrentSweepIntervalMs = 60000;
 const defaultStreamTrackerSweepMs = 5000;
-const defaultStreamTrackerStaleMs = 1000 * 60 * 60;
+const defaultStreamTrackerStaleMs = 1000 * 60;
 const defaultTorrentTrackerListUrl =
   "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
 const defaultTorrentTrackerRefreshMs = 1000 * 60 * 60 * 6;
