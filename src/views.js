@@ -604,7 +604,6 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
           <div class="small">Created ${escapeHtml(key.created_at)}</div>
           <div class="small" style="margin-top: 8px;">Status: <span data-key-status>${key.paused_at ? "Paused" : "Active"}</span></div>
           <div class="small" style="margin-top: 8px;">Concurrent streams: <span data-key-active-streams>${key.activeStreams}</span> / ${escapeHtml(key.max_concurrent_streams)}</div>
-          <div class="small" style="margin-top: 8px;">4K access: ${key.allow_4k ? "true" : "false"}</div>
           <div class="reveal-block" style="margin-top: 8px;">
             <button type="button" class="reveal-toggle">Click to Reveal</button>
             <div class="reveal-secret" hidden>
@@ -849,13 +848,6 @@ function renderKeyDetails({
               <form method="post" action="/admin/keys/${key.id}/${key.paused_at ? "resume" : "pause"}" style="margin-top: 12px;">
                 <button class="${key.paused_at ? "" : "danger"}" type="submit">${key.paused_at ? "Resume Key" : "Pause Key"}</button>
               </form>
-              <form method="post" action="/admin/keys/${key.id}/4k-access" style="margin-top: 12px;">
-                <label class="checkbox-row">
-                  <input type="checkbox" name="allow4k" value="true" ${key.allow_4k ? "checked" : ""} />
-                  Allow 4K content
-                </label>
-                <button type="submit">Save 4K Access</button>
-              </form>
             </article>
             <article class="panel">
               <h2 class="section-title">Key Details</h2>
@@ -866,7 +858,6 @@ function renderKeyDetails({
                 <button type="submit">Rename Key</button>
               </form>
               <div class="small">Created ${escapeHtml(key.created_at)}</div>
-              <div class="small" style="margin-top: 8px;">4K access: ${key.allow_4k ? "true" : "false"}</div>
               <details class="revoke-details" style="margin-top: 12px;">
                 <summary><span class="revoke-toggle">Revoke</span></summary>
                 <form class="revoke-form" method="post" action="/admin/keys/${key.id}/revoke">

@@ -84,7 +84,7 @@ function generateVideo(outputPath, lines) {
 function getStatusVideoPath(config, options) {
   const cacheDir = path.join(config.dataDir, "status-videos");
   const keySlug = slugify(options.keyName);
-  const kind = options.kind === "paused" || options.kind === "4k" ? options.kind : "limit";
+  const kind = options.kind === "paused" ? options.kind : "limit";
   const limitPart = Number.isInteger(options.limit) ? `-${options.limit}` : "";
   const filePath = path.join(cacheDir, `${kind}-${keySlug}${limitPart}-v${STATUS_VIDEO_VERSION}.mp4`);
 
@@ -96,12 +96,6 @@ function getStatusVideoPath(config, options) {
             `Key: ${options.keyName}`,
             "This key has been paused by the admin.",
           ]
-        : kind === "4k"
-          ? [
-              "4K content blocked",
-              `Key: ${options.keyName}`,
-              "4K playback is disabled for this key.",
-            ]
         : [
             "Streaming limit reached",
             `Key: ${options.keyName}`,

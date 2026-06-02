@@ -144,8 +144,8 @@ function openDatabase(config) {
 
   const stmts = {
     createKey: db.prepare(`
-      INSERT INTO addon_keys (name, token, max_concurrent_streams, allow_4k)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO addon_keys (name, token, max_concurrent_streams)
+      VALUES (?, ?, ?)
     `),
     revokeKey: db.prepare(`
       UPDATE addon_keys
@@ -153,7 +153,7 @@ function openDatabase(config) {
       WHERE id = ? AND revoked_at IS NULL
     `),
     getActiveKeys: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, allow_4k, created_at, last_active_at, paused_at
+      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at
       FROM addon_keys
       WHERE revoked_at IS NULL
       ORDER BY id DESC
@@ -166,12 +166,12 @@ function openDatabase(config) {
       LIMIT 20
     `),
     getKeyByToken: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, allow_4k, created_at, last_active_at, paused_at, revoked_at
+      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at, revoked_at
       FROM addon_keys
       WHERE token = ?
     `),
     getKeyById: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, allow_4k, created_at, last_active_at, paused_at, revoked_at
+      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at, revoked_at
       FROM addon_keys
       WHERE id = ?
     `),
@@ -183,11 +183,6 @@ function openDatabase(config) {
     updateKeyLastActive: db.prepare(`
       UPDATE addon_keys
       SET last_active_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND revoked_at IS NULL
-    `),
-    updateKey4kAccess: db.prepare(`
-      UPDATE addon_keys
-      SET allow_4k = ?
       WHERE id = ? AND revoked_at IS NULL
     `),
     pauseKey: db.prepare(`
@@ -380,8 +375,8 @@ function openDatabase(config) {
     `),
   };
 
-  function createAddonKey(name, token, maxConcurrentStreams = 1, allow4k = false) {
-    const result = stmts.createKey.run(name, token, maxConcurrentStreams, allow4k ? 1 : 0);
+  function createAddonKey(name, token, maxConcurrentStreams = 1) {
+    const result = stmts.createKey.run(name, token, maxConcurrentStreams);
     return Number(result.lastInsertRowid);
   }
 
@@ -391,7 +386,6 @@ function openDatabase(config) {
     }
     return {
       ...row,
-      allow_4k: Boolean(row.allow_4k),
     };
   }
 
@@ -497,9 +491,6 @@ function openDatabase(config) {
     },
     updateKeyLimit(id, maxConcurrentStreams) {
       stmts.updateKeyLimit.run(maxConcurrentStreams, id);
-    },
-    updateKey4kAccess(id, allow4k) {
-      stmts.updateKey4kAccess.run(allow4k ? 1 : 0, id);
     },
     updateKeyLastActive(id) {
       stmts.updateKeyLastActive.run(id);

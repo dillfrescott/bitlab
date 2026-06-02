@@ -15,7 +15,6 @@ const { renderLogin, renderDashboard, renderKeyDetails } = require("./views");
 const { createAddonInterface, validateAddonKey } = require("./stremio");
 const { createBitmagnetService } = require("./bitmagnet");
 const { getStatusVideoPath } = require("./status-video");
-const { is4kRelease } = require("./classify");
 
 const config = getConfig();
 const db = openDatabase(config);
@@ -302,9 +301,7 @@ function sendBlockedPlaybackVideo(req, res, key, reason) {
   sendVideoFile(req, res, filePath);
 }
 
-function streamIs4k(stream) {
-  return is4kRelease(stream);
-}
+
 
 app.set("trust proxy", true);
 app.use((_req, res, next) => {
@@ -469,7 +466,6 @@ app.get("/admin/api/keys/:id", requireAdmin, async (req, res) => {
     activeStreams: getActiveStreamCount(key.token),
     activePlaybackHashes: getActivePlaybackHashes(key.token),
     paused: Boolean(key.paused_at),
-    allow4k: Boolean(key.allow_4_k),
     maxConcurrentStreams: key.max_concurrent_streams,
     watchHistory,
   });
@@ -677,20 +673,6 @@ app.post("/admin/keys/:id/settings", requireAdmin, (req, res) => {
   res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("Key settings updated.")}`);
 });
 
-app.post("/admin/keys/:id/4k-access", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  const allow4k = req.body.allow4k === "true";
-  db.updateKey4kAccess(keyId, allow4k);
-  res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("4K access updated.")}`);
-});
-
 app.post("/admin/keys/:id/rename", requireAdmin, (req, res) => {
   const keyId = Number(req.params.id);
   const key = db.getKeyById(keyId);
@@ -821,7 +803,6 @@ async function handleAddonResource(req, res, resource, extraFromPath = false) {
       {
         baseUrl: getBaseUrl(req),
         keyToken: key.token,
-        allow4k: key.allow_4k,
       },
     );
     if (resource === "stream") {
@@ -866,12 +847,6 @@ app.get("/play/:token", async (req, res) => {
     if (key.paused_at) {
       console.error(`[play] key paused key=${JSON.stringify(key.name)} ip=${JSON.stringify(req.ip)}`);
       sendBlockedPlaybackVideo(req, res, key, "paused");
-      return;
-    }
-
-    if (!key.allow_4k && streamIs4k(payload.stream)) {
-      console.error(`[play] 4k blocked key=${JSON.stringify(key.name)} ip=${JSON.stringify(req.ip)}`);
-      sendBlockedPlaybackVideo(req, res, key, "4k");
       return;
     }
 
@@ -944,11 +919,6 @@ app.head("/play/:token", async (req, res) => {
 
     if (key.paused_at) {
       sendBlockedPlaybackVideo(req, res, key, "paused");
-      return;
-    }
-
-    if (!key.allow_4k && streamIs4k(payload.stream)) {
-      sendBlockedPlaybackVideo(req, res, key, "4k");
       return;
     }
 

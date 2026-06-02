@@ -5,7 +5,6 @@ const {
   normalizeKey,
   buildTitleSearchAliases,
   inferReleaseQuality,
-  is4kRelease,
   buildSeriesReleaseLabel,
 } = require("./classify");
 const {
@@ -205,10 +204,6 @@ function hasDisplayableSeeders(release, options = {}) {
   return seeders >= 1;
 }
 
-function filterReleasesForKeyAccess(releases, options = {}) {
-  const allow4k = Boolean(options.allow4k);
-  return (Array.isArray(releases) ? releases : []).filter((release) => allow4k || !is4kRelease(release));
-}
 
 function getReleaseIdentityKey(release) {
   const rawId = release.infoHash || release.magnetUri || release.releaseName || "";
@@ -1196,7 +1191,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     persistIndexedMedia(db, args.type, media, mediaExternalIds);
     let attemptedExpansion = false;
 
-    let releases = media.releases
+    let releases = (Array.isArray(media.releases) ? media.releases : [])
       .filter((release) => {
         if (releaseId) {
           return release.id === releaseId;
@@ -1207,9 +1202,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
         return true;
       })
       .filter(hasDisplayableSeeders);
-    releases = filterReleasesForKeyAccess(releases, {
-      allow4k: args.config.allow4k,
-    });
 
     if (args.type === "series") {
       if (Number.isInteger(season) && Number.isInteger(episode)) {
@@ -1227,9 +1219,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
             releases = media.releases
               .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
               .filter(hasDisplayableSeeders);
-            releases = filterReleasesForKeyAccess(releases, {
-              allow4k: args.config.allow4k,
-            });
           }
         }
 
@@ -1243,18 +1232,12 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           releases = media.releases
             .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
             .filter(hasDisplayableSeeders);
-          releases = filterReleasesForKeyAccess(releases, {
-            allow4k: args.config.allow4k,
-          });
         }
 
         if (releases.length === 0) {
           releases = media.releases
             .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
             .filter((r) => hasDisplayableSeeders(r, { lenient: true }));
-          releases = filterReleasesForKeyAccess(releases, {
-            allow4k: args.config.allow4k,
-          });
           if (releases.length > 0) {
             console.log(`[addon] series stream match title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} using lenient seeder filter count=${releases.length}`);
           }
@@ -1272,9 +1255,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
                 .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
                 .filter(hasDisplayableSeeders),
             ).filter(hasDisplayableSeeders);
-            releases = filterReleasesForKeyAccess(releases, {
-              allow4k: args.config.allow4k,
-            });
           }
         }
       } else {
@@ -1305,9 +1285,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
               .filter(hasDisplayableSeeders),
           ),
         );
-        releases = filterReleasesForKeyAccess(releases, {
-          allow4k: args.config.allow4k,
-        });
       }
     }
 
@@ -1329,9 +1306,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
             .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
             .filter(hasDisplayableSeeders),
         );
-        releases = filterReleasesForKeyAccess(releases, {
-          allow4k: args.config.allow4k,
-        });
       }
     }
 
