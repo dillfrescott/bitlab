@@ -30,7 +30,7 @@ services:
       - BITMAGNET_URL=http://localhost:3333
       - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
       - TORRENT_CACHE_RESERVE_GB=10
-      - TORRENT_IDLE_GRACE_MS=300000
+      - TORRENT_IDLE_GRACE_MS=120000
       - TORRENT_SWEEP_INTERVAL_MS=30000
       - METADATA_TIMEOUT_MS=90000
       - TORRENT_TRACKER_LIST_URL=https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt
