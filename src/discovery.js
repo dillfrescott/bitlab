@@ -1,6 +1,5 @@
 const {
   normalizeKey,
-  inferReleaseQuality,
   extractEpisodeParts,
   extractSeasonParts,
 } = require("./classify");

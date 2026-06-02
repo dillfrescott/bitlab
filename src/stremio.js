@@ -368,32 +368,6 @@ function parseExternalIds(id) {
   return null;
 }
 
-function buildMediaIndexAliasKeys(type, media, externalIds = null) {
-  const keys = [];
-  const imdbId = String(externalIds?.imdbId || media?.imdbId || "").replace(/^tt/i, "");
-  const tmdbId = String(externalIds?.tmdbId || media?.tmdbId || "");
-
-  if (imdbId) {
-    keys.push(`${type}:imdb:${imdbId}`);
-  }
-  if (tmdbId) {
-    keys.push(`${type}:tmdb:${tmdbId}`);
-  }
-  if (media?.id) {
-    keys.push(`${type}:id:${media.id}`);
-  }
-
-  return Array.from(new Set(keys.filter(Boolean)));
-}
-
-function persistIndexedMedia(db, type, media, externalIds = null) {
-  if (!db || !media) {
-    return;
-  }
-  const aliasKeys = buildMediaIndexAliasKeys(type, media, externalIds);
-  db.indexResolvedMedia(media, aliasKeys);
-}
-
 function extractMetadataYear(meta) {
   const yearCandidates = [
     meta?.year,
@@ -1166,7 +1140,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       return { meta: null };
     }
     const externalIds = parseExternalIds(args.id);
-    persistIndexedMedia(db, args.type, media, externalIds);
     seriesExpansions.warm(media);
     return { meta: toMeta(media) };
   });
@@ -1188,7 +1161,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     console.log(
       `[addon] stream media loaded type=${args.type} title=${JSON.stringify(media.title)} releases=${media.releases.length}`,
     );
-    persistIndexedMedia(db, args.type, media, mediaExternalIds);
     let attemptedExpansion = false;
 
     let releases = (Array.isArray(media.releases) ? media.releases : [])
@@ -1215,7 +1187,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           if (fallbackMedia) {
             media = fallbackMedia;
             cacheMediaAliases(mediaCache, media);
-            persistIndexedMedia(db, args.type, media, mediaExternalIds);
             releases = media.releases
               .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
               .filter(hasDisplayableSeeders);
@@ -1228,7 +1199,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
             `[addon] stream attempting series expansion title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`,
           );
           media = await seriesExpansions.ensureExpanded(media, { season, episode });
-          persistIndexedMedia(db, args.type, media, mediaExternalIds);
           releases = media.releases
             .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
             .filter(hasDisplayableSeeders);
@@ -1248,7 +1218,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           const expandedMedia = await seriesExpansions.ensureExpanded(media, { season, episode });
           if (expandedMedia) {
             media = expandedMedia;
-            persistIndexedMedia(db, args.type, media, mediaExternalIds);
             releases = mergeReleaseLists(
               releases,
               media.releases
@@ -1276,7 +1245,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       });
       if (refreshed) {
         media = await seriesExpansions.ensureExpanded(refreshed, { season, episode });
-        persistIndexedMedia(db, args.type, media, mediaExternalIds);
         releases = sortReleases(
           mergeReleaseLists(
             releases,
@@ -1300,7 +1268,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       if (fallbackMedia) {
         media = fallbackMedia;
         cacheMediaAliases(mediaCache, media);
-        persistIndexedMedia(db, args.type, media, mediaExternalIds);
         releases = sortReleases(
           media.releases
             .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))

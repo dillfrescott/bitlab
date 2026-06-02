@@ -736,15 +736,6 @@ function createBitmagnetService(config) {
     return groupResults(type, parseItems(body));
   }
 
-  async function search(type, query, limit) {
-    const trimmed = String(query || "").trim();
-    if (!trimmed) {
-      return [];
-    }
-
-    const grouped = await searchRaw(type, trimmed, limit);
-    return (await curateSearchResults(type, trimmed, grouped)).slice(0, limit);
-  }
 
   async function resolveByExternalId(type, ids) {
     const imdbId = normalizeExternalId(ids?.imdbId, "imdb");
@@ -914,7 +905,6 @@ function createBitmagnetService(config) {
 
   return {
     searchRaw,
-    search,
     searchWithFiles,
     resolveByExternalId,
     resolveByGroupId,
