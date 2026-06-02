@@ -7,23 +7,18 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "7000:7000" # Expose the frontend web UI port
+      - "7000:7000"
     environment:
       - VPN_SERVICE_PROVIDER=surfshark
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${SURFSHARK_WIREGUARD_PRIVATE_KEY}
       - WIREGUARD_ADDRESSES=${SURFSHARK_WIREGUARD_ADDRESSES}
-      
-      # Optional: restrict connection to specific countries/cities
-      - SERVER_COUNTRIES=Germany
-      - SERVER_CITIES=
     restart: unless-stopped
 
   frontend:
     image: xdillfrescott/bitlab:latest
     container_name: bitmagnet-stremio-frontend
     restart: unless-stopped
-    # Route all network traffic through Gluetun
     network_mode: "service:gluetun"
     environment:
       - PORT=7000
@@ -31,7 +26,6 @@ services:
       - BASE_URL=https://bitlab.dill.moe
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SESSION_SECRET=${SESSION_SECRET}
-      # Since we share the network stack with bitmagnet, it is accessible on localhost
       - BITMAGNET_URL=http://localhost:3333
       - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
       - TORRENT_CACHE_RESERVE_GB=10
@@ -51,7 +45,6 @@ services:
     image: ghcr.io/bitmagnet-io/bitmagnet:latest
     container_name: bitmagnet
     restart: unless-stopped
-    # Route all network traffic through Gluetun
     network_mode: "service:gluetun"
     environment:
       - POSTGRES_HOST=postgres
