@@ -13,6 +13,7 @@ services:
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${SURFSHARK_WIREGUARD_PRIVATE_KEY}
       - WIREGUARD_ADDRESSES=${SURFSHARK_WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=Germany
     restart: unless-stopped
 
   frontend:
