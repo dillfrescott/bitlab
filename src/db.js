@@ -24,7 +24,6 @@ function openDatabase(config) {
       name TEXT NOT NULL,
       token TEXT NOT NULL UNIQUE,
       max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
-      allow_4k INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_active_at TEXT,
       paused_at TEXT,
@@ -123,7 +122,6 @@ function openDatabase(config) {
   `);
 
   ensureColumn(db, "addon_keys", "max_concurrent_streams", "max_concurrent_streams INTEGER NOT NULL DEFAULT 1");
-  ensureColumn(db, "addon_keys", "allow_4k", "allow_4k INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "addon_keys", "last_active_at", "last_active_at TEXT");
   ensureColumn(db, "addon_keys", "paused_at", "paused_at TEXT");
   ensureColumn(db, "media_items", "normalized_key", "normalized_key TEXT");

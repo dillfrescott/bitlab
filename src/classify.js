@@ -130,11 +130,6 @@ function inferReleaseQuality(release) {
   return /\b4k\b/i.test(source) ? "4K" : "Unknown";
 }
 
-function is4kRelease(release) {
-  const q = inferReleaseQuality(release);
-  return q === "4K" || q === "2160P";
-}
-
 function buildSeriesReleaseLabel(mediaTitle, release) {
   const title = String(mediaTitle || "").trim();
   const parts = [];
@@ -164,7 +159,6 @@ module.exports = {
   normalizeKey,
   buildTitleSearchAliases,
   inferReleaseQuality,
-  is4kRelease,
   buildSeriesReleaseLabel,
   isVideoFile,
 };
