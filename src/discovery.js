@@ -52,11 +52,12 @@ function searchScore(query, item) {
         queryKey.includes(titleKey) ? 1.6 :
           computeTokenOverlap(queryTokens, titleTokens) * 1.5;
   const releaseCount = Math.log1p(Array.isArray(item?.releases) ? item.releases.length : 0) * 0.5;
-  const bestSeeders = Math.log1p(Math.max(
-    0,
-    ...(Array.isArray(item?.releases) ? item.releases : []).map((release) =>
-      Number.isFinite(release?.seeders) ? release.seeders : 0),
-  )) * 0.3;
+  const releases = Array.isArray(item?.releases) ? item.releases : [];
+  const maxSeeders = releases.reduce((max, r) => {
+    const seeders = Number.isFinite(r?.seeders) ? r.seeders : 0;
+    return seeders > max ? seeders : max;
+  }, 0);
+  const bestSeeders = Math.log1p(maxSeeders) * 0.3;
   const year = Number(item?.year) || 0;
   const yearBonus = year > 0 && /\b(19|20)\d{2}\b/.test(query) && String(query).includes(String(year)) ? 0.4 : 0;
   return titleMatch + releaseCount + bestSeeders + yearBonus;

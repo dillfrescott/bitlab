@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 
 const dataDir = path.resolve(process.cwd(), "data");
-const torrentCacheDir = "/tmp/webtorrent";
+const torrentCacheDir = process.env.TORRENT_CACHE_DIR || "/tmp/webtorrent";
 const defaultTorrentCacheReserveGb = 20;
 const defaultTorrentIdleGraceMs = 1000 * 60 * 5;
 const defaultTorrentSweepIntervalMs = 60000;
@@ -68,10 +68,14 @@ function getConfig() {
     ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
-    sessionSecret:
-      process.env.SESSION_SECRET ||
-      crypto.createHash("sha256").update("bitmagnet-stremio-lab").digest("hex"),
-    sessionTtlMs: 1000 * 60 * 60 * 24 * 365 * 100, // 100 years (infinite)
+    sessionSecret: (function() {
+      if (process.env.SESSION_SECRET) {
+        return process.env.SESSION_SECRET;
+      }
+      console.warn("[config] WARNING: SESSION_SECRET environment variable is not set. Generating a random, session-scoped secret key.");
+      return crypto.randomBytes(32).toString("hex");
+    })(),
+    sessionTtlMs: 1000 * 60 * 60 * 24 * 7, // 7 days
     streamTokenTtlMs: 1000 * 60 * 60 * 4,
     catalogPageSize: 50,
     metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 30),

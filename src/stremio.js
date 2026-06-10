@@ -1018,7 +1018,9 @@ async function loadMedia(bitmagnet, cache, pendingCache, id, type, options = {})
 
   pendingCache.set(pendingKey, pending);
   pending.finally(() => {
-    pendingCache.delete(pendingKey);
+    if (pendingCache.get(pendingKey) === pending) {
+      pendingCache.delete(pendingKey);
+    }
   });
   return pending;
 }
@@ -1064,7 +1066,9 @@ function createSeriesExpansionManager(cache, torrentService) {
       cacheMediaAliases(cache, expanded);
       return expanded;
     }).finally(() => {
-      pendingExpansions.delete(expansionKey);
+      if (pendingExpansions.get(expansionKey) === pending) {
+        pendingExpansions.delete(expansionKey);
+      }
     });
 
     pendingExpansions.set(expansionKey, pending);

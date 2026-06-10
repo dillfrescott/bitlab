@@ -47,8 +47,12 @@ function verifySession(token, secret) {
     return false;
   }
 
-  const payload = JSON.parse(base64UrlDecode(body));
-  return Number(payload.exp) > Date.now();
+  try {
+    const payload = JSON.parse(base64UrlDecode(body));
+    return Number(payload.exp) > Date.now();
+  } catch (_error) {
+    return false;
+  }
 }
 
 function createPlaybackToken({ keyToken, stream, secret, ttlMs }) {
@@ -72,16 +76,20 @@ function verifyPlaybackToken(token, secret) {
     return null;
   }
 
-  const payload = JSON.parse(base64UrlDecode(body));
-  if (Number(payload.exp) <= Date.now()) {
+  try {
+    const payload = JSON.parse(base64UrlDecode(body));
+    if (Number(payload.exp) <= Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch (_error) {
     return null;
   }
-
-  return payload;
 }
 
 function hashPassword(password) {
-  return crypto.createHash("sha256").update(password).digest("hex");
+  const salt = "bitmagnet-stremio-salt-128374981";
+  return crypto.pbkdf2Sync(password, salt, 10000, 64, "sha512").toString("hex");
 }
 
 function generateOpaqueToken() {
@@ -95,4 +103,5 @@ module.exports = {
   verifyPlaybackToken,
   hashPassword,
   generateOpaqueToken,
+  timingSafeCompare,
 };

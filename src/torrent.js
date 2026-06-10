@@ -950,7 +950,9 @@ function createTorrentService(config) {
 
     torrentCache.set(cacheKey, pending);
     pending.finally(() => {
-      torrentCache.delete(cacheKey);
+      if (torrentCache.get(cacheKey) === pending) {
+        torrentCache.delete(cacheKey);
+      }
     });
     return pending;
   }
@@ -996,9 +998,9 @@ function createTorrentService(config) {
       }
       return result;
     } finally {
+      const cacheKey = infoHash || extractInfoHash(magnetUri) || magnetUri;
       if (options.removeAfterInspect) {
         const client = await getClient();
-        const infoHash = extractInfoHash(magnetUri);
         const target = torrent || findExistingTorrent(client, magnetUri, infoHash);
         if (target) {
           const removeTarget = target.magnetURI || target.magnetUri || target.infoHash || magnetUri;
@@ -1006,17 +1008,36 @@ function createTorrentService(config) {
           pruneEmptyCacheDirectories("inspect-remove");
           torrentState.delete(getTorrentKey(target, magnetUri));
         }
+        torrentCache.delete(cacheKey);
       }
     }
   }
 
   async function getTorrentWithTimeout(magnetUri, timeoutMs = config.metadataTimeoutMs || 90000) {
-    return Promise.race([
-      getTorrent(magnetUri),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`Metadata fetch timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
+    const infoHash = extractInfoHash(magnetUri);
+    const cacheKey = infoHash || magnetUri;
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`Metadata fetch timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([getTorrent(magnetUri), timeoutPromise]);
+    } catch (error) {
+      if (error.message.includes("timed out")) {
+        const client = await getClient();
+        const target = findExistingTorrent(client, magnetUri, infoHash);
+        if (target) {
+          log("metadata fetch timed out, removing torrent from client", { infoHash });
+          await removeTorrent(client, target.magnetURI || target.magnetUri || magnetUri, target, true);
+        }
+        torrentCache.delete(cacheKey);
+        torrentState.delete(cacheKey);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function streamSource(source, req, res) {

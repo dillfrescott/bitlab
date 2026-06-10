@@ -41,6 +41,11 @@ function extractEpisodeParts(text) {
     }
 
     const num = parseInt(ep[1], 10);
+    const isResolution = [480, 576, 720, 1080, 2160].includes(num);
+    if (isResolution && !/episode/i.test(ep[0])) {
+      return null;
+    }
+
     if (num > 1900 && num < 2100) {
       if (/episode/i.test(ep[0])) {
          return { season: null, episode: num };

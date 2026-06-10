@@ -9,6 +9,7 @@ const {
   verifyPlaybackToken,
   hashPassword,
   generateOpaqueToken,
+  timingSafeCompare,
 } = require("./auth");
 const { createTorrentService } = require("./torrent");
 const { renderLogin, renderDashboard, renderKeyDetails, renderSessions } = require("./views");
@@ -649,7 +650,7 @@ function getSessionName(req) {
 
 app.post("/admin/login", (req, res) => {
   const provided = String(req.body.password || "");
-  if (hashPassword(provided) !== hashPassword(config.adminPassword)) {
+  if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
     res.status(401).send(renderLogin("Invalid password."));
     return;
   }
