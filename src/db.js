@@ -43,6 +43,17 @@ function openDatabase(config) {
       info_hash TEXT,
       watched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      user_agent TEXT,
+      ip_address TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_active_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      revoked_at TEXT
+    );
   `);
 
   ensureColumn(db, "addon_keys", "max_concurrent_streams", "max_concurrent_streams INTEGER NOT NULL DEFAULT 1");
@@ -50,6 +61,7 @@ function openDatabase(config) {
   ensureColumn(db, "addon_keys", "paused_at", "paused_at TEXT");
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_key_watch_history_key_id ON key_watch_history(key_id, watched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(token);
   `);
 
   const stmts = {
@@ -222,6 +234,55 @@ function openDatabase(config) {
     },
     deleteOldWatchHistory() {
       return stmts.deleteOldWatchHistory.run();
+    },
+    createSession(token, name, userAgent, ipAddress) {
+      return db.prepare(`
+        INSERT INTO admin_sessions (token, name, user_agent, ip_address)
+        VALUES (?, ?, ?, ?)
+      `).run(token, name, userAgent, ipAddress);
+    },
+    getSessionByToken(token) {
+      return db.prepare(`
+        SELECT id, token, name, user_agent, ip_address, created_at, last_active_at, revoked_at
+        FROM admin_sessions
+        WHERE token = ?
+      `).get(token);
+    },
+    getSessionById(id) {
+      return db.prepare(`
+        SELECT id, token, name, user_agent, ip_address, created_at, last_active_at, revoked_at
+        FROM admin_sessions
+        WHERE id = ?
+      `).get(id);
+    },
+    getActiveSessions() {
+      return db.prepare(`
+        SELECT id, token, name, user_agent, ip_address, created_at, last_active_at
+        FROM admin_sessions
+        WHERE revoked_at IS NULL
+        ORDER BY last_active_at DESC
+      `).all();
+    },
+    renameSession(id, name) {
+      return db.prepare(`
+        UPDATE admin_sessions
+        SET name = ?
+        WHERE id = ? AND revoked_at IS NULL
+      `).run(name, id);
+    },
+    revokeSession(id) {
+      return db.prepare(`
+        UPDATE admin_sessions
+        SET revoked_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND revoked_at IS NULL
+      `).run(id);
+    },
+    updateSessionLastActive(token) {
+      return db.prepare(`
+        UPDATE admin_sessions
+        SET last_active_at = CURRENT_TIMESTAMP
+        WHERE token = ? AND revoked_at IS NULL
+      `).run(token);
     },
   };
 }

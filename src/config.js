@@ -71,7 +71,7 @@ function getConfig() {
     sessionSecret:
       process.env.SESSION_SECRET ||
       crypto.createHash("sha256").update("bitmagnet-stremio-lab").digest("hex"),
-    sessionTtlMs: 1000 * 60 * 60 * 12,
+    sessionTtlMs: 1000 * 60 * 60 * 24 * 365 * 100, // 100 years (infinite)
     streamTokenTtlMs: 1000 * 60 * 60 * 4,
     catalogPageSize: 50,
     metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 30),

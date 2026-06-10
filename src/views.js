@@ -330,8 +330,10 @@ function layout({ title, body }) {
       box-shadow: none;
     }
     .chip {
-      display: inline-flex;
-      align-items: center;
+      display: inline-block;
+      text-align: center;
+      vertical-align: middle;
+      line-height: normal;
       padding: 4px 10px;
       border-radius: 999px;
       font-size: 11px;
@@ -339,6 +341,7 @@ function layout({ title, body }) {
       border: 1px solid var(--line);
       background: rgba(10, 10, 12, 0.6);
       color: var(--muted);
+      white-space: nowrap;
     }
     .chip.good { color: #34d399; border-color: rgba(52, 211, 153, 0.2); background: rgba(52, 211, 153, 0.05); }
     .chip.bad { color: #f87171; border-color: rgba(248, 113, 113, 0.2); background: rgba(248, 113, 113, 0.05); }
@@ -639,6 +642,7 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
             <p>Manage addon keys and check the upstream connection.</p>
           </div>
           <div class="header-actions">
+            <a class="button-link" href="/admin/sessions">Sessions</a>
             <a class="button-link" href="/admin/bitmagnet/" target="_blank">Bitmagnet UI</a>
             <form method="post" action="/admin/logout">
               <button class="danger" type="submit">Logout</button>
@@ -1032,8 +1036,109 @@ function renderKeyDetails({
   });
 }
 
+function formatUserAgent(ua) {
+  if (!ua) return "Unknown Device";
+  let browser = "Unknown Browser";
+  let os = "Unknown OS";
+
+  if (ua.includes("Firefox/")) browser = "Firefox";
+  else if (ua.includes("Chrome/")) browser = "Chrome";
+  else if (ua.includes("Safari/")) browser = "Safari";
+  else if (ua.includes("Edge/")) browser = "Edge";
+  else if (ua.includes("Opera/") || ua.includes("OPR/")) browser = "Opera";
+
+  if (ua.includes("Windows NT")) os = "Windows";
+  else if (ua.includes("Macintosh") || ua.includes("Mac OS X")) os = "macOS";
+  else if (ua.includes("Linux")) os = "Linux";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
+
+  return `${browser} on ${os}`;
+}
+
+function renderSessions({ sessions, currentSessionToken, timezone, message }) {
+  const formatTimestamp = createTimestampFormatter(timezone || "UTC");
+
+  const sessionRows = sessions.map((session) => {
+    const isCurrent = session.token === currentSessionToken;
+    const uaInfo = formatUserAgent(session.user_agent);
+
+    return `
+      <tr data-session-id="${session.id}">
+        <td>
+          <form method="post" action="/admin/sessions/${session.id}/rename" style="display: flex; align-items: center; gap: 8px;">
+            <input type="text" name="name" value="${escapeHtml(session.name)}" required style="padding: 6px 12px; font-size: 0.9em; border-radius: var(--radius-sm); border: 1px solid var(--line); background: rgba(10, 10, 12, 0.6); color: var(--text); width: 220px;" />
+            <button type="submit" style="padding: 6px 12px; font-size: 0.8em; margin: 0; min-height: unset; line-height: 1.2; width: auto;">Rename</button>
+          </form>
+        </td>
+        <td>
+          <div class="small" style="font-weight: 500;">${escapeHtml(uaInfo)}</div>
+          <div class="small" style="font-size: 0.85em; opacity: 0.6; word-break: break-all; max-width: 300px; margin-top: 4px;">${escapeHtml(session.user_agent)}</div>
+        </td>
+        <td style="white-space: nowrap;"><code>${escapeHtml(session.ip_address)}</code></td>
+        <td><span class="small">${escapeHtml(formatTimestamp(session.created_at))}</span></td>
+        <td><span class="small">${escapeHtml(formatTimestamp(session.last_active_at))}</span></td>
+        <td>
+          ${isCurrent ? '<span class="chip good">Current Session</span>' : '<span class="chip">Active</span>'}
+        </td>
+        <td>
+          <form method="post" action="/admin/sessions/${session.id}/revoke" style="margin: 0;" onsubmit="return ${isCurrent ? 'confirm(\'Are you sure you want to revoke your current session? You will be logged out immediately.\')' : 'true'};">
+            <button class="danger" type="submit" style="padding: 6px 12px; font-size: 0.8em; margin: 0; min-height: unset; line-height: 1.2; width: auto;">Revoke</button>
+          </form>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  return layout({
+    title: "Manage Sessions",
+    body: `
+      <div class="shell">
+        <section class="hero">
+          <div>
+            <h1>Admin Sessions</h1>
+            <p>Manage all active administrator sessions.</p>
+          </div>
+          <div class="header-actions">
+            <a class="button-link" href="/admin">Back to Dashboard</a>
+            <form method="post" action="/admin/logout">
+              <button class="danger" type="submit">Logout</button>
+            </form>
+          </div>
+        </section>
+        ${renderMessage(message)}
+        <section class="main-grid" style="margin-top: 16px; grid-template-columns: 1fr;">
+          <article class="panel">
+            <h2 class="section-title">Active Sessions</h2>
+            <div class="small" style="margin-bottom: 12px; opacity: 0.6;">Showing active sessions logged into this admin panel. Revoking a session will force that device to log in again.</div>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Session Name</th>
+                    <th>Device / User Agent</th>
+                    <th>IP Address</th>
+                    <th>Created At</th>
+                    <th>Last Active</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sessionRows || '<tr><td colspan="7" class="small" style="text-align: center;">No active sessions found.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </div>
+    `,
+  });
+}
+
 module.exports = {
   renderLogin,
   renderDashboard,
   renderKeyDetails,
+  renderSessions,
 };

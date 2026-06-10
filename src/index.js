@@ -11,7 +11,7 @@ const {
   generateOpaqueToken,
 } = require("./auth");
 const { createTorrentService } = require("./torrent");
-const { renderLogin, renderDashboard, renderKeyDetails } = require("./views");
+const { renderLogin, renderDashboard, renderKeyDetails, renderSessions } = require("./views");
 const { createAddonInterface, validateAddonKey } = require("./stremio");
 const { createBitmagnetService } = require("./bitmagnet");
 const { getStatusVideoPath } = require("./status-video");
@@ -367,10 +367,19 @@ function clearCookie(res, name) {
 
 function requireAdmin(req, res, next) {
   const cookies = parseCookies(req);
-  if (!verifySession(cookies.admin_session, config.sessionSecret)) {
+  const token = cookies.admin_session;
+  if (!token || !verifySession(token, config.sessionSecret)) {
     res.status(401).send(renderLogin("Admin session required."));
     return;
   }
+
+  const dbSession = db.getSessionByToken(token);
+  if (!dbSession || dbSession.revoked_at) {
+    res.status(401).send(renderLogin("Session has been revoked or is invalid."));
+    return;
+  }
+
+  db.updateSessionLastActive(token);
   next();
 }
 
@@ -601,12 +610,42 @@ app.all("/api/*splat", requireAdmin, async (req, res) => {
 
 app.get("/admin", (req, res) => {
   const cookies = parseCookies(req);
-  if (!verifySession(cookies.admin_session, config.sessionSecret)) {
+  const token = cookies.admin_session;
+  if (!token || !verifySession(token, config.sessionSecret)) {
     res.send(renderLogin(""));
     return;
   }
+
+  const dbSession = db.getSessionByToken(token);
+  if (!dbSession || dbSession.revoked_at) {
+    res.send(renderLogin("Session has been revoked."));
+    return;
+  }
+
+  db.updateSessionLastActive(token);
   renderAdmin(req, res);
 });
+
+function getSessionName(req) {
+  const ua = req.headers["user-agent"] || "";
+  
+  // Basic user agent parsing
+  let browser = "Unknown Browser";
+  if (ua.includes("Firefox/")) browser = "Firefox";
+  else if (ua.includes("Chrome/")) browser = "Chrome";
+  else if (ua.includes("Safari/")) browser = "Safari";
+  else if (ua.includes("Edge/")) browser = "Edge";
+  else if (ua.includes("Opera/") || ua.includes("OPR/")) browser = "Opera";
+
+  let os = "Unknown OS";
+  if (ua.includes("Windows NT")) os = "Windows";
+  else if (ua.includes("Macintosh") || ua.includes("Mac OS X")) os = "macOS";
+  else if (ua.includes("Linux")) os = "Linux";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
+
+  return `${browser} on ${os}`;
+}
 
 app.post("/admin/login", (req, res) => {
   const provided = String(req.body.password || "");
@@ -616,13 +655,77 @@ app.post("/admin/login", (req, res) => {
   }
 
   const session = issueSession(config.sessionSecret, config.sessionTtlMs);
+  const userAgent = req.headers["user-agent"] || "Unknown User Agent";
+  const ipAddress = req.ip || req.socket.remoteAddress || "Unknown IP";
+  const name = getSessionName(req);
+
+  db.createSession(session, name, userAgent, ipAddress);
+
   setCookie(res, "admin_session", session, { maxAge: config.sessionTtlMs });
   res.redirect("/admin");
 });
 
 app.post("/admin/logout", requireAdmin, (req, res) => {
+  const cookies = parseCookies(req);
+  const token = cookies.admin_session;
+  if (token) {
+    const dbSession = db.getSessionByToken(token);
+    if (dbSession) {
+      db.revokeSession(dbSession.id);
+    }
+  }
   clearCookie(res, "admin_session");
   res.redirect("/admin");
+});
+
+app.get("/admin/sessions", requireAdmin, (req, res) => {
+  const cookies = parseCookies(req);
+  const currentSessionToken = cookies.admin_session;
+  const sessions = db.getActiveSessions();
+
+  res.send(
+    renderSessions({
+      sessions,
+      currentSessionToken,
+      timezone: config.timezone,
+      message: adminMessage(req),
+    })
+  );
+});
+
+app.post("/admin/sessions/:id/rename", requireAdmin, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getSessionById(sessionId);
+
+  if (!session || session.revoked_at) {
+    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  const name = String(req.body.name || "").trim() || "Untitled Session";
+  db.renameSession(sessionId, name);
+  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session renamed successfully.")}`);
+});
+
+app.post("/admin/sessions/:id/revoke", requireAdmin, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getSessionById(sessionId);
+
+  if (!session || session.revoked_at) {
+    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  db.revokeSession(sessionId);
+
+  const cookies = parseCookies(req);
+  if (session.token === cookies.admin_session) {
+    clearCookie(res, "admin_session");
+    res.redirect("/admin");
+    return;
+  }
+
+  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session revoked successfully.")}`);
 });
 
 app.post("/admin/keys", requireAdmin, (req, res) => {
