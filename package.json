@@ -17,6 +17,7 @@
   "dependencies": {
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
+    "pg": "^8.21.0",
     "stremio-addon-sdk": "^1.6.10",
     "webtorrent": "^2.8.5"
   }

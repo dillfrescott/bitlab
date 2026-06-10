@@ -1,2 +1,4 @@
 # Environment variables (contains secrets)
 .env
+node_modules
+package-lock.json

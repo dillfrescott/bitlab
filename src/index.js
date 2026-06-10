@@ -15,6 +15,7 @@ const { renderLogin, renderDashboard, renderKeyDetails } = require("./views");
 const { createAddonInterface, validateAddonKey } = require("./stremio");
 const { createBitmagnetService } = require("./bitmagnet");
 const { getStatusVideoPath } = require("./status-video");
+const { getPostgresStats } = require("./postgres");
 
 const config = getConfig();
 const db = openDatabase(config);
@@ -494,10 +495,13 @@ app.get("/admin/api/status", requireAdmin, async (req, res) => {
 
   const totalActiveStreams = activeKeys.reduce((acc, key) => acc + key.activeStreams, 0);
 
+  const postgresStats = await getPostgresStats(config);
+
   res.json({
     bitmagnet: await bitmagnet.getStatus(),
     totalActiveStreams,
     activeKeys,
+    postgres: postgresStats,
   });
 });
 

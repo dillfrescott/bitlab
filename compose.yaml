@@ -40,9 +40,14 @@ services:
       - TORRENT_TRACKER_LIST_URL=https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt
       - TORRENT_TRACKER_REFRESH_MS=21600000
       - TORRENT_MAX_CONNS=500
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=bitmagnet
+      - POSTGRES_USER=postgres
     volumes:
       - ./data/frontend:/app/data
       - ./cache:/tmp/webtorrent
+      - /mnt/drive:/postgres_volume:ro
     depends_on:
       gluetun:
         condition: service_healthy

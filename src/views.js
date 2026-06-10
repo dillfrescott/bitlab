@@ -682,6 +682,11 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
               </form>
               <div class="small muted-block">Create a tokenized manifest for an install.</div>
             </article>
+            <article class="stat">
+              <div class="eyebrow">Postgres DB & Disk</div>
+              <div class="value" data-stat-postgres-value>Loading…</div>
+              <div class="small" data-stat-postgres-sub>checking stats</div>
+            </article>
           </div>
           <div class="stack">
             <article class="panel">
@@ -714,6 +719,21 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
               // Update total streams
               const totalVal = document.querySelector("[data-stat-total-streams]");
               if (totalVal) totalVal.textContent = data.totalActiveStreams;
+
+              // Update postgres status
+              const pgVal = document.querySelector("[data-stat-postgres-value]");
+              const pgSub = document.querySelector("[data-stat-postgres-sub]");
+              if (pgVal && data.postgres) {
+                if (data.postgres.hasStats) {
+                  pgVal.textContent = \`\${data.postgres.dbSizeFormatted} / \${data.postgres.volumeTotalFormatted}\`;
+                  if (pgSub) {
+                    pgSub.textContent = \`\${data.postgres.freePercent}% free space remaining\`;
+                  }
+                } else {
+                  pgVal.textContent = "N/A";
+                  if (pgSub) pgSub.textContent = "db connection offline";
+                }
+              }
 
               // Update and re-order key cards
               const list = document.querySelector(".list");
@@ -748,6 +768,7 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
             }
           }
 
+          updateDashboard();
           setInterval(updateDashboard, 2000);
         })();
       </script>

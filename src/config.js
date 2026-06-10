@@ -85,6 +85,11 @@ function getConfig() {
     bitmagnetTorznabPath,
     bitmagnetApiKey: process.env.BITMAGNET_API_KEY || "",
     bitmagnetWebUiUrl: process.env.BITMAGNET_WEBUI_URL || bitmagnetUrl,
+    postgresHost: process.env.POSTGRES_HOST || "postgres",
+    postgresPort: Number(process.env.POSTGRES_PORT || 5432),
+    postgresDb: process.env.POSTGRES_DB || "bitmagnet",
+    postgresUser: process.env.POSTGRES_USER || "postgres",
+    postgresPassword: process.env.POSTGRES_PASSWORD || "postgres",
   };
 }
 
