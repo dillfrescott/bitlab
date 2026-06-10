@@ -37,7 +37,7 @@ function createTimestampFormatter(timezone) {
   };
 }
 
-function layout({ title, body }) {
+function layout({ title, body, extraHead = "" }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -515,6 +515,7 @@ function layout({ title, body }) {
       }
     }
   </style>
+  ${extraHead}
 </head>
 <body>
   ${body}
@@ -569,9 +570,10 @@ function renderMessage(message) {
   return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
 }
 
-function renderLogin(message) {
+function renderLogin(message, turnstileSiteKey = "") {
   return layout({
     title: "Login",
+    extraHead: turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -587,10 +589,82 @@ function renderLogin(message) {
             <label>Password
               <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
             </label>
+            ${
+              turnstileSiteKey
+                ? `<div id="turnstile-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
+                : ""
+            }
             <button type="submit">Sign In</button>
           </form>
         </section>
       </div>
+      ${
+        turnstileSiteKey
+          ? `
+          <script>
+            (() => {
+              const form = document.querySelector('form[action="/admin/login"]');
+              if (!form) return;
+              let turnstileWidgetId = null;
+              form.addEventListener('submit', (e) => {
+                const response = form.querySelector('[name="cf-turnstile-response"]');
+                if (response && response.value) {
+                  return;
+                }
+                
+                if (!window.turnstile) {
+                  e.preventDefault();
+                  const button = form.querySelector('button[type="submit"]');
+                  if (button) {
+                    button.disabled = true;
+                    button.innerText = "Loading Verification...";
+                  }
+                  const checkInterval = setInterval(() => {
+                    if (window.turnstile) {
+                      clearInterval(checkInterval);
+                      if (button) {
+                        button.disabled = false;
+                        button.innerText = "Sign In";
+                      }
+                      form.dispatchEvent(new Event('submit', { cancelable: true }));
+                    }
+                  }, 100);
+                  setTimeout(() => {
+                    clearInterval(checkInterval);
+                    if (!window.turnstile) {
+                      if (button) {
+                        button.disabled = false;
+                        button.innerText = "Sign In";
+                      }
+                      form.submit();
+                    }
+                  }, 4000);
+                  return;
+                }
+                
+                e.preventDefault();
+                if (turnstileWidgetId === null) {
+                  const container = document.getElementById('turnstile-container');
+                  if (container) {
+                    container.style.display = 'flex';
+                  }
+                  turnstileWidgetId = window.turnstile.render('#turnstile-container', {
+                    sitekey: '${escapeHtml(turnstileSiteKey)}',
+                    theme: 'dark',
+                    callback: (token) => {
+                      form.submit();
+                    },
+                    'error-callback': () => {
+                      window.turnstile.reset(turnstileWidgetId);
+                    }
+                  });
+                }
+              });
+            })();
+          </script>
+          `
+          : ""
+      }
     `,
   });
 }
