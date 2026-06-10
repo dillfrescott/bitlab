@@ -1310,7 +1310,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       });
 
       return [{
-        name: "[Bit]",
+        name: "[Bitlab]",
         title: formatStreamTitle(release, {
           mediaType: media.type,
           mediaTitle: media.title,
