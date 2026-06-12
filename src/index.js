@@ -378,13 +378,13 @@ function requireAdmin(req, res, next) {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.status(401).send(renderLogin("Admin session required.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Admin session required.", config.nullcaptchaUrl));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.status(401).send(renderLogin("Session has been revoked or is invalid.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Session has been revoked or is invalid.", config.nullcaptchaUrl));
     return;
   }
 
@@ -396,24 +396,24 @@ function requireUser(req, res, next) {
   const cookies = parseCookies(req);
   const token = cookies.user_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.status(401).send(renderUserLogin("User session required.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("User session required.", config.nullcaptchaUrl));
     return;
   }
 
   const dbSession = db.getUserSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.status(401).send(renderUserLogin("Session has been revoked or is invalid.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("Session has been revoked or is invalid.", config.nullcaptchaUrl));
     return;
   }
 
   const user = db.getUserById(dbSession.user_id);
   if (!user) {
-    res.status(401).send(renderUserLogin("User no longer exists.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("User no longer exists.", config.nullcaptchaUrl));
     return;
   }
 
   if (user.is_suspended) {
-    res.status(401).send(renderUserLogin("Your account has been suspended.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("Your account has been suspended.", config.nullcaptchaUrl));
     return;
   }
 
@@ -422,26 +422,23 @@ function requireUser(req, res, next) {
   next();
 }
 
-async function verifyTurnstile(req) {
-  if (config.turnstileSecretKey && config.turnstileSiteKey) {
-    const turnstileResponse = req.body["cf-turnstile-response"] || "";
-    const remoteIp = req.ip || req.socket.remoteAddress || "";
+async function verifyNullCaptcha(req) {
+  if (config.nullcaptchaUrl) {
+    const nullcaptchaResponse = req.body["nullcaptcha-response"] || req.body["nullcaptcha-response"] || "";
 
     try {
-      const verifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+      const verifyUrl = `${config.nullcaptchaUrl.replace(/\/$/, "")}/api/validate`;
       const verifyResponse = await fetch(verifyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          secret: config.turnstileSecretKey,
-          response: turnstileResponse,
-          remoteip: remoteIp,
+          token: nullcaptchaResponse,
         }),
       });
       const data = await verifyResponse.json();
       return !!data.success;
     } catch (error) {
-      console.error("[turnstile] Verification failed with error:", error);
+      console.error("[nullcaptcha] Verification failed with error:", error);
       return false;
     }
   }
@@ -542,19 +539,19 @@ app.get("/", (req, res) => {
   const cookies = parseCookies(req);
   const token = cookies.user_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.send(renderUserLogin("", config.turnstileSiteKey));
+    res.send(renderUserLogin("", config.nullcaptchaUrl));
     return;
   }
 
   const dbSession = db.getUserSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.send(renderUserLogin("Session has been revoked.", config.turnstileSiteKey));
+    res.send(renderUserLogin("Session has been revoked.", config.nullcaptchaUrl));
     return;
   }
 
   const user = db.getUserById(dbSession.user_id);
   if (!user || user.is_suspended) {
-    res.send(renderUserLogin("User account suspended or invalid.", config.turnstileSiteKey));
+    res.send(renderUserLogin("User account suspended or invalid.", config.nullcaptchaUrl));
     return;
   }
 
@@ -601,9 +598,9 @@ app.get("/", (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  const isHuman = await verifyTurnstile(req);
+  const isHuman = await verifyNullCaptcha(req);
   if (!isHuman) {
-    res.status(400).send(renderUserLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
+    res.status(400).send(renderUserLogin("Null CAPTCHA verification failed. Please try again.", config.nullcaptchaUrl));
     return;
   }
 
@@ -612,17 +609,17 @@ app.post("/login", async (req, res) => {
 
   const user = db.getUserByUsername(username);
   if (!user) {
-    res.status(401).send(renderUserLogin("Invalid username or password.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("Invalid username or password.", config.nullcaptchaUrl));
     return;
   }
 
   if (user.is_suspended) {
-    res.status(401).send(renderUserLogin("Your account has been suspended.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("Your account has been suspended.", config.nullcaptchaUrl));
     return;
   }
 
   if (!timingSafeCompare(hashPassword(password), user.password_hash)) {
-    res.status(401).send(renderUserLogin("Invalid username or password.", config.turnstileSiteKey));
+    res.status(401).send(renderUserLogin("Invalid username or password.", config.nullcaptchaUrl));
     return;
   }
 
@@ -1233,13 +1230,13 @@ app.get("/admin", (req, res) => {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.send(renderLogin("", config.turnstileSiteKey));
+    res.send(renderLogin("", config.nullcaptchaUrl));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.send(renderLogin("Session has been revoked.", config.turnstileSiteKey));
+    res.send(renderLogin("Session has been revoked.", config.nullcaptchaUrl));
     return;
   }
 
@@ -1267,15 +1264,15 @@ function getSessionName(req) {
 }
 
 app.post("/admin/login", async (req, res) => {
-  const isHuman = await verifyTurnstile(req);
+  const isHuman = await verifyNullCaptcha(req);
   if (!isHuman) {
-    res.status(400).send(renderLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
+    res.status(400).send(renderLogin("Null CAPTCHA verification failed. Please try again.", config.nullcaptchaUrl));
     return;
   }
 
   const provided = String(req.body.password || "");
   if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
-    res.status(401).send(renderLogin("Invalid password.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Invalid password.", config.nullcaptchaUrl));
     return;
   }
 

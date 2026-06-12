@@ -579,10 +579,10 @@ function renderMessage(message) {
   return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
 }
 
-function renderLogin(message, turnstileSiteKey = "") {
+function renderLogin(message, nullcaptchaUrl = "") {
   return layout({
     title: "Bitlab Admin Login",
-    extraHead: turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>` : "",
+    extraHead: nullcaptchaUrl ? `<script src="${nullcaptchaUrl.replace(/\/$/, "")}/js/null.js" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -594,13 +594,13 @@ function renderLogin(message, turnstileSiteKey = "") {
         ${renderMessage(message)}
         <section class="panel">
           <h2 class="section-title">Admin Login</h2>
-          <form class="needs-turnstile" method="post" action="/admin/login">
+          <form class="needs-nullcaptcha" method="post" action="/admin/login">
             <label>Password
               <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
             </label>
             ${
-              turnstileSiteKey
-                ? `<div id="turnstile-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
+              nullcaptchaUrl
+                ? `<div id="nullcaptcha-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
                 : ""
             }
             <button type="submit">Sign In</button>
@@ -608,63 +608,41 @@ function renderLogin(message, turnstileSiteKey = "") {
         </section>
       </div>
       ${
-        turnstileSiteKey
+        nullcaptchaUrl
           ? `
           <script>
             (() => {
-              const form = document.querySelector('.needs-turnstile');
+              const form = document.querySelector('.needs-nullcaptcha');
               if (!form) return;
-              let turnstileWidgetId = null;
-              form.addEventListener('submit', (e) => {
-                const response = form.querySelector('[name="cf-turnstile-response"]');
-                if (response && response.value) {
+              
+              form.addEventListener('submit', async (e) => {
+                let tokenInput = form.querySelector('[name="nullcaptcha-response"]');
+                if (tokenInput && tokenInput.value) {
                   return;
                 }
-                
-                if (!window.turnstile) {
-                  e.preventDefault();
-                  const button = form.querySelector('button[type="submit"]');
-                  if (button) {
-                    button.disabled = true;
-                    button.innerText = "Loading Verification...";
-                  }
-                  const checkInterval = setInterval(() => {
-                    if (window.turnstile) {
-                      clearInterval(checkInterval);
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.dispatchEvent(new Event('submit', { cancelable: true }));
-                    }
-                  }, 100);
-                  setTimeout(() => {
-                    clearInterval(checkInterval);
-                    if (!window.turnstile) {
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.submit();
-                    }
-                  }, 4000);
-                  return;
-                }
-                
+
                 e.preventDefault();
-                if (turnstileWidgetId === null) {
-                  const container = document.getElementById('turnstile-container');
-                  if (container) {
-                    container.style.display = 'flex';
-                  }
-                  turnstileWidgetId = window.turnstile.render('#turnstile-container', {
-                    sitekey: '${escapeHtml(turnstileSiteKey)}',
-                    theme: 'dark',
-                    callback: (token) => {
-                      form.submit();
+                const container = document.getElementById('nullcaptcha-container');
+                if (!container) return;
+                
+                container.style.display = 'flex';
+                
+                if (!container.querySelector('#null-captcha-widget')) {
+                  window.NullCaptcha.render(container, {
+                    onSuccess: (token) => {
+                      if (!tokenInput) {
+                        tokenInput = document.createElement('input');
+                        tokenInput.type = 'hidden';
+                        tokenInput.name = 'nullcaptcha-response';
+                        form.appendChild(tokenInput);
+                      }
+                      tokenInput.value = token;
+                      setTimeout(() => {
+                        form.submit();
+                      }, 500);
                     },
-                    'error-callback': () => {
-                      window.turnstile.reset(turnstileWidgetId);
+                    onFailure: (err) => {
+                      console.error("Null CAPTCHA error:", err);
                     }
                   });
                 }
@@ -678,10 +656,10 @@ function renderLogin(message, turnstileSiteKey = "") {
   });
 }
 
-function renderUserLogin(message, turnstileSiteKey = "") {
+function renderUserLogin(message, nullcaptchaUrl = "") {
   return layout({
     title: "Sign In - Bitlab",
-    extraHead: turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>` : "",
+    extraHead: nullcaptchaUrl ? `<script src="${nullcaptchaUrl.replace(/\/$/, "")}/js/null.js" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -693,7 +671,7 @@ function renderUserLogin(message, turnstileSiteKey = "") {
         ${renderMessage(message)}
         <section class="panel">
           <h2 class="section-title">User Sign In</h2>
-          <form class="needs-turnstile" method="post" action="/login">
+          <form class="needs-nullcaptcha" method="post" action="/login">
             <label>Username
               <input type="text" name="username" placeholder="Enter username" required />
             </label>
@@ -701,8 +679,8 @@ function renderUserLogin(message, turnstileSiteKey = "") {
               <input type="password" name="password" placeholder="Enter password" required />
             </label>
             ${
-              turnstileSiteKey
-                ? `<div id="turnstile-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
+              nullcaptchaUrl
+                ? `<div id="nullcaptcha-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
                 : ""
             }
             <button type="submit">Sign In</button>
@@ -710,63 +688,41 @@ function renderUserLogin(message, turnstileSiteKey = "") {
         </section>
       </div>
       ${
-        turnstileSiteKey
+        nullcaptchaUrl
           ? `
           <script>
             (() => {
-              const form = document.querySelector('.needs-turnstile');
+              const form = document.querySelector('.needs-nullcaptcha');
               if (!form) return;
-              let turnstileWidgetId = null;
-              form.addEventListener('submit', (e) => {
-                const response = form.querySelector('[name="cf-turnstile-response"]');
-                if (response && response.value) {
+              
+              form.addEventListener('submit', async (e) => {
+                let tokenInput = form.querySelector('[name="nullcaptcha-response"]');
+                if (tokenInput && tokenInput.value) {
                   return;
                 }
-                
-                if (!window.turnstile) {
-                  e.preventDefault();
-                  const button = form.querySelector('button[type="submit"]');
-                  if (button) {
-                    button.disabled = true;
-                    button.innerText = "Loading Verification...";
-                  }
-                  const checkInterval = setInterval(() => {
-                    if (window.turnstile) {
-                      clearInterval(checkInterval);
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.dispatchEvent(new Event('submit', { cancelable: true }));
-                    }
-                  }, 100);
-                  setTimeout(() => {
-                    clearInterval(checkInterval);
-                    if (!window.turnstile) {
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.submit();
-                    }
-                  }, 4000);
-                  return;
-                }
-                
+
                 e.preventDefault();
-                if (turnstileWidgetId === null) {
-                  const container = document.getElementById('turnstile-container');
-                  if (container) {
-                    container.style.display = 'flex';
-                  }
-                  turnstileWidgetId = window.turnstile.render('#turnstile-container', {
-                    sitekey: '${escapeHtml(turnstileSiteKey)}',
-                    theme: 'dark',
-                    callback: (token) => {
-                      form.submit();
+                const container = document.getElementById('nullcaptcha-container');
+                if (!container) return;
+                
+                container.style.display = 'flex';
+                
+                if (!container.querySelector('#null-captcha-widget')) {
+                  window.NullCaptcha.render(container, {
+                    onSuccess: (token) => {
+                      if (!tokenInput) {
+                        tokenInput = document.createElement('input');
+                        tokenInput.type = 'hidden';
+                        tokenInput.name = 'nullcaptcha-response';
+                        form.appendChild(tokenInput);
+                      }
+                      tokenInput.value = token;
+                      setTimeout(() => {
+                        form.submit();
+                      }, 500);
                     },
-                    'error-callback': () => {
-                      window.turnstile.reset(turnstileWidgetId);
+                    onFailure: (err) => {
+                      console.error("Null CAPTCHA error:", err);
                     }
                   });
                 }
