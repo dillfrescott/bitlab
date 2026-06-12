@@ -370,13 +370,13 @@ function requireAdmin(req, res, next) {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.status(401).send(renderLogin("Admin session required.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Admin session required.", config.capSiteKey));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.status(401).send(renderLogin("Session has been revoked or is invalid.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Session has been revoked or is invalid.", config.capSiteKey));
     return;
   }
 
@@ -613,13 +613,13 @@ app.get("/admin", (req, res) => {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.send(renderLogin("", config.turnstileSiteKey));
+    res.send(renderLogin("", config.capSiteKey));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.send(renderLogin("Session has been revoked.", config.turnstileSiteKey));
+    res.send(renderLogin("Session has been revoked.", config.capSiteKey));
     return;
   }
 
@@ -649,37 +649,35 @@ function getSessionName(req) {
 }
 
 app.post("/admin/login", async (req, res) => {
-  if (config.turnstileSecretKey && config.turnstileSiteKey) {
-    const turnstileResponse = req.body["cf-turnstile-response"] || "";
-    const remoteIp = req.ip || req.socket.remoteAddress || "";
+  if (config.capSecretKey && config.capSiteKey) {
+    const capToken = req.body["cap-token"] || "";
 
     let isHuman = false;
     try {
-      const verifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+      const verifyUrl = "https://captcha.dill.moe/siteverify";
       const verifyResponse = await fetch(verifyUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          secret: config.turnstileSecretKey,
-          response: turnstileResponse,
-          remoteip: remoteIp,
+          secret: config.capSecretKey,
+          response: capToken,
         }),
       });
       const data = await verifyResponse.json();
       isHuman = !!data.success;
     } catch (error) {
-      console.error("[turnstile] Verification failed with error:", error);
+      console.error("[captcha] Verification failed with error:", error);
     }
 
     if (!isHuman) {
-      res.status(400).send(renderLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
+      res.status(400).send(renderLogin("CAPTCHA verification failed. Please try again.", config.capSiteKey));
       return;
     }
   }
 
   const provided = String(req.body.password || "");
   if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
-    res.status(401).send(renderLogin("Invalid password.", config.turnstileSiteKey));
+    res.status(401).send(renderLogin("Invalid password.", config.capSiteKey));
     return;
   }
 

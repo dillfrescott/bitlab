@@ -570,10 +570,10 @@ function renderMessage(message) {
   return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
 }
 
-function renderLogin(message, turnstileSiteKey = "") {
+function renderLogin(message, capSiteKey = "") {
   return layout({
     title: "Login",
-    extraHead: turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>` : "",
+    extraHead: capSiteKey ? `<script src="https://cdn.jsdelivr.net/npm/@cap.js/widget" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -585,13 +585,13 @@ function renderLogin(message, turnstileSiteKey = "") {
         ${renderMessage(message)}
         <section class="panel">
           <h2 class="section-title">Admin Login</h2>
-          <form method="post" action="/admin/login">
+          <form id="login-form" method="post" action="/admin/login">
             <label>Password
               <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
             </label>
             ${
-              turnstileSiteKey
-                ? `<div id="turnstile-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
+              capSiteKey
+                ? `<div id="captcha-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
                 : ""
             }
             <button type="submit">Sign In</button>
@@ -599,70 +599,36 @@ function renderLogin(message, turnstileSiteKey = "") {
         </section>
       </div>
       ${
-        turnstileSiteKey
-          ? `
-          <script>
-            (() => {
-              const form = document.querySelector('form[action="/admin/login"]');
-              if (!form) return;
-              let turnstileWidgetId = null;
-              form.addEventListener('submit', (e) => {
-                const response = form.querySelector('[name="cf-turnstile-response"]');
-                if (response && response.value) {
-                  return;
-                }
-                
-                if (!window.turnstile) {
-                  e.preventDefault();
-                  const button = form.querySelector('button[type="submit"]');
-                  if (button) {
-                    button.disabled = true;
-                    button.innerText = "Loading Verification...";
-                  }
-                  const checkInterval = setInterval(() => {
-                    if (window.turnstile) {
-                      clearInterval(checkInterval);
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.dispatchEvent(new Event('submit', { cancelable: true }));
+        capSiteKey
+          ? `<script>
+              (function() {
+                const form = document.getElementById('login-form');
+                const container = document.getElementById('captcha-container');
+                let captchaAdded = false;
+
+                form.addEventListener('submit', function(e) {
+                  if (!captchaAdded) {
+                    e.preventDefault();
+
+                    if (!form.reportValidity()) {
+                      return;
                     }
-                  }, 100);
-                  setTimeout(() => {
-                    clearInterval(checkInterval);
-                    if (!window.turnstile) {
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.submit();
-                    }
-                  }, 4000);
-                  return;
-                }
-                
-                e.preventDefault();
-                if (turnstileWidgetId === null) {
-                  const container = document.getElementById('turnstile-container');
-                  if (container) {
+
                     container.style.display = 'flex';
-                  }
-                  turnstileWidgetId = window.turnstile.render('#turnstile-container', {
-                    sitekey: '${escapeHtml(turnstileSiteKey)}',
-                    theme: 'dark',
-                    callback: (token) => {
+                    const widget = document.createElement('cap-widget');
+                    widget.setAttribute('data-cap-api-endpoint', 'https://captcha.dill.moe/${escapeHtml(capSiteKey)}/');
+                    widget.setAttribute('required', '');
+
+                    widget.addEventListener('solve', function() {
                       form.submit();
-                    },
-                    'error-callback': () => {
-                      window.turnstile.reset(turnstileWidgetId);
-                    }
-                  });
-                }
-              });
-            })();
-          </script>
-          `
+                    });
+
+                    container.appendChild(widget);
+                    captchaAdded = true;
+                  }
+                });
+              })();
+            </script>`
           : ""
       }
     `,
