@@ -2,8 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const STATUS_VIDEO_DURATION_SECONDS = 10;
-const STATUS_VIDEO_VERSION = 3;
+const STATUS_VIDEO_DURATION_SECONDS = 6;
+const STATUS_VIDEO_VERSION = 4;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -46,6 +46,9 @@ function buildFilter(lines) {
 function generateVideo(outputPath, lines) {
   ensureDir(path.dirname(outputPath));
   const filter = buildFilter(lines);
+  const ext = path.extname(outputPath).toLowerCase();
+  const formatArgs = ext === ".ts" ? ["-f", "mpegts"] : ["-movflags", "+faststart"];
+
   execFileSync(
     "ffmpeg",
     [
@@ -53,7 +56,7 @@ function generateVideo(outputPath, lines) {
       "-f",
       "lavfi",
       "-i",
-      `color=c=0x00a651:s=1280x720:r=30:d=${STATUS_VIDEO_DURATION_SECONDS}`,
+      `color=c=0x111215:s=1280x720:r=30:d=${STATUS_VIDEO_DURATION_SECONDS}`,
       "-f",
       "lavfi",
       "-i",
@@ -70,8 +73,7 @@ function generateVideo(outputPath, lines) {
       "128k",
       "-pix_fmt",
       "yuv420p",
-      "-movflags",
-      "+faststart",
+      ...formatArgs,
       "-shortest",
       outputPath,
     ],
@@ -84,23 +86,81 @@ function generateVideo(outputPath, lines) {
 function getStatusVideoPath(config, options) {
   const cacheDir = path.join(config.dataDir, "status-videos");
   const keySlug = slugify(options.keyName);
-  const kind = options.kind === "paused" ? options.kind : "limit";
+  const kind = ["paused", "suspended", "bandwidth", "insufficient_bandwidth", "intro", "limit"].includes(options.kind) ? options.kind : "limit";
   const limitPart = Number.isInteger(options.limit) ? `-${options.limit}` : "";
-  const filePath = path.join(cacheDir, `${kind}-${keySlug}${limitPart}-v${STATUS_VIDEO_VERSION}.mp4`);
+
+  const usedGb = options.bandwidthUsed ? Math.round(options.bandwidthUsed / (1024 ** 3)) : 0;
+  const limitGb = options.bandwidthLimit ? Math.round(options.bandwidthLimit / (1024 ** 3)) : 0;
+  const neededGb = options.bandwidthNeeded ? (options.bandwidthNeeded / (1024 ** 3)).toFixed(2) : "0.00";
+  const remainingGb = Math.max(0, limitGb - usedGb);
+
+  let cacheKey = `${kind}-${keySlug}`;
+  if (kind === "limit") {
+    cacheKey += `${limitPart}`;
+  } else if (kind === "bandwidth" || kind === "insufficient_bandwidth" || kind === "intro") {
+    cacheKey += `-u${usedGb}-l${limitGb}-n${neededGb}`;
+  }
+
+  const ext = options.format === "ts" ? "ts" : "mp4";
+  const filePath = path.join(cacheDir, `${cacheKey}-v${STATUS_VIDEO_VERSION}.${ext}`);
 
   if (!fs.existsSync(filePath)) {
-    const lines =
-      kind === "paused"
-        ? [
-            "Streaming paused",
-            `Key: ${options.keyName}`,
-            "This key has been paused by the admin.",
-          ]
-        : [
-            "Streaming limit reached",
-            `Key: ${options.keyName}`,
-            `This key is limited to ${options.limit} concurrent stream(s).`,
-          ];
+    let lines = [];
+    if (kind === "paused") {
+      lines = [
+        "Streaming paused",
+        `Key: ${options.keyName}`,
+        "This key has been paused by the admin.",
+      ];
+    } else if (kind === "suspended") {
+      lines = [
+        "Account suspended",
+        `User: ${options.keyName}`,
+        "Your account has been suspended by the admin.",
+      ];
+    } else if (kind === "bandwidth") {
+      const percent = Math.min(100, Math.max(0, Math.round((remainingGb / limitGb) * 100))) || 0;
+      const barLength = 10;
+      const filledLength = Math.round((percent / 100) * barLength);
+      const emptyLength = barLength - filledLength;
+      const bar = "#".repeat(filledLength) + "-".repeat(emptyLength);
+
+      lines = [
+        "Bandwidth Limit Reached",
+        `Remaining: ${remainingGb}/${limitGb} GB [${bar}]`,
+        "Please contact the administrator to upgrade your plan.",
+      ];
+    } else if (kind === "insufficient_bandwidth") {
+      const percent = Math.min(100, Math.max(0, Math.round((remainingGb / limitGb) * 100))) || 0;
+      const barLength = 10;
+      const filledLength = Math.round((percent / 100) * barLength);
+      const emptyLength = barLength - filledLength;
+      const bar = "#".repeat(filledLength) + "-".repeat(emptyLength);
+
+      lines = [
+        "Insufficient Bandwidth",
+        `Remaining: ${remainingGb}/${limitGb} GB [${bar}]`,
+        `This video requires ${neededGb} GB to stream.`,
+      ];
+    } else if (kind === "intro") {
+      const percent = Math.min(100, Math.max(0, Math.round((remainingGb / limitGb) * 100))) || 0;
+      const barLength = 10;
+      const filledLength = Math.round((percent / 100) * barLength);
+      const emptyLength = barLength - filledLength;
+      const bar = "#".repeat(filledLength) + "-".repeat(emptyLength);
+
+      lines = [
+        "Preparing Your Stream...",
+        `Quota: ${remainingGb}/${limitGb} GB Left [${bar}]`,
+        `Estimated usage: ${neededGb} GB`,
+      ];
+    } else {
+      lines = [
+        "Streaming limit reached",
+        `Key: ${options.keyName}`,
+        `This key is limited to ${options.limit} concurrent stream(s).`,
+      ];
+    }
     generateVideo(filePath, lines);
   }
 

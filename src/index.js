@@ -12,7 +12,14 @@ const {
   timingSafeCompare,
 } = require("./auth");
 const { createTorrentService } = require("./torrent");
-const { renderLogin, renderDashboard, renderKeyDetails, renderSessions } = require("./views");
+const {
+  renderLogin,
+  renderDashboard,
+  renderUserDetails,
+  renderSessions,
+  renderUserLogin,
+  renderUserDashboard,
+} = require("./views");
 const { createAddonInterface, validateAddonKey } = require("./stremio");
 const { createBitmagnetService } = require("./bitmagnet");
 const { getStatusVideoPath } = require("./status-video");
@@ -294,16 +301,17 @@ function sendVideoFile(req, res, filePath) {
   fs.createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
 }
 
-function sendBlockedPlaybackVideo(req, res, key, reason) {
+function sendBlockedPlaybackVideo(req, res, key, reason, needed = 0, user = null) {
   const filePath = getStatusVideoPath(config, {
     kind: reason,
     keyName: key.name,
     limit: key.max_concurrent_streams,
+    bandwidthUsed: user ? user.bandwidth_used : undefined,
+    bandwidthLimit: user ? user.bandwidth_limit : undefined,
+    bandwidthNeeded: needed,
   });
   sendVideoFile(req, res, filePath);
 }
-
-
 
 app.set("trust proxy", true);
 app.use((_req, res, next) => {
@@ -384,6 +392,62 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireUser(req, res, next) {
+  const cookies = parseCookies(req);
+  const token = cookies.user_session;
+  if (!token || !verifySession(token, config.sessionSecret)) {
+    res.status(401).send(renderUserLogin("User session required.", config.turnstileSiteKey));
+    return;
+  }
+
+  const dbSession = db.getUserSessionByToken(token);
+  if (!dbSession || dbSession.revoked_at) {
+    res.status(401).send(renderUserLogin("Session has been revoked or is invalid.", config.turnstileSiteKey));
+    return;
+  }
+
+  const user = db.getUserById(dbSession.user_id);
+  if (!user) {
+    res.status(401).send(renderUserLogin("User no longer exists.", config.turnstileSiteKey));
+    return;
+  }
+
+  if (user.is_suspended) {
+    res.status(401).send(renderUserLogin("Your account has been suspended.", config.turnstileSiteKey));
+    return;
+  }
+
+  db.updateUserSessionLastActive(token);
+  req.user = user;
+  next();
+}
+
+async function verifyTurnstile(req) {
+  if (config.turnstileSecretKey && config.turnstileSiteKey) {
+    const turnstileResponse = req.body["cf-turnstile-response"] || "";
+    const remoteIp = req.ip || req.socket.remoteAddress || "";
+
+    try {
+      const verifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+      const verifyResponse = await fetch(verifyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          secret: config.turnstileSecretKey,
+          response: turnstileResponse,
+          remoteip: remoteIp,
+        }),
+      });
+      const data = await verifyResponse.json();
+      return !!data.success;
+    } catch (error) {
+      console.error("[turnstile] Verification failed with error:", error);
+      return false;
+    }
+  }
+  return true;
+}
+
 function adminMessage(req) {
   return typeof req.query.msg === "string" ? req.query.msg : "";
 }
@@ -407,30 +471,36 @@ function getWatchHistoryLimit(req) {
 }
 
 function renderAdmin(req, res, message = "") {
-  const activeKeys = db.getActiveKeys()
-    .map((key) => ({
-      ...key,
-      activeStreams: getActiveStreamCount(key.token),
-    }))
+  const users = db.getAllUsers()
+    .map((user) => {
+      const keys = db.getUserKeys(user.id);
+      let activeStreams = 0;
+      for (const k of keys) {
+        activeStreams += getActiveStreamCount(k.token);
+      }
+      return {
+        ...user,
+        activeStreams,
+        keysCount: keys.length,
+      };
+    })
     .sort((a, b) => {
       const aActive = a.activeStreams > 0;
       const bActive = b.activeStreams > 0;
       if (aActive && !bActive) return -1;
       if (!aActive && bActive) return 1;
 
-            const aTime = a.last_active_at ? new Date(a.last_active_at).getTime() : 0;
-      const bTime = b.last_active_at ? new Date(b.last_active_at).getTime() : 0;
-      if (aTime !== bTime) return bTime - aTime;
-
-            return b.id - a.id;
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
     });
 
-  const totalActiveStreams = activeKeys.reduce((acc, key) => acc + key.activeStreams, 0);
+  const totalActiveStreams = users.reduce((acc, u) => acc + u.activeStreams, 0);
 
   res.send(
     renderDashboard({
       baseUrl: getBaseUrl(req),
-      activeKeys,
+      users,
       totalActiveStreams,
       bitmagnetStatus: { ok: null },
       message: message || adminMessage(req),
@@ -438,16 +508,25 @@ function renderAdmin(req, res, message = "") {
   );
 }
 
-async function renderKeyAdmin(req, res, key, message = "") {
+async function renderUserAdmin(req, res, user, message = "") {
+  const keys = db.getUserKeys(user.id);
   const historyLimit = getWatchHistoryLimit(req);
-  const watchHistory = db.getWatchHistoryForKey(key.id, historyLimit + 1);
+  const watchHistory = db.getWatchHistoryForUser(user.id, historyLimit + 1);
+
+  let activeStreams = 0;
+  let activePlaybackHashes = [];
+  for (const k of keys) {
+    activeStreams += getActiveStreamCount(k.token);
+    activePlaybackHashes.push(...getActivePlaybackHashes(k.token));
+  }
 
   res.send(
-    renderKeyDetails({
+    renderUserDetails({
       baseUrl: getBaseUrl(req),
-      key,
-      activeStreams: getActiveStreamCount(key.token),
-      activePlaybackHashes: getActivePlaybackHashes(key.token),
+      user,
+      keys,
+      activeStreams,
+      activePlaybackHashes,
       watchHistory: watchHistory.slice(0, historyLimit),
       watchHistoryHasMore: watchHistory.length > historyLimit,
       watchHistoryLimit: historyLimit,
@@ -458,59 +537,300 @@ async function renderKeyAdmin(req, res, key, message = "") {
   );
 }
 
+// --- USER MAIN DOMAIN ROUTING ---
 app.get("/", (req, res) => {
-  res.redirect("/admin");
-});
-
-app.get("/admin/api/keys/:id", requireAdmin, async (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-  if (!key || key.revoked_at) {
-    res.status(404).json({ err: "Key not found" });
+  const cookies = parseCookies(req);
+  const token = cookies.user_session;
+  if (!token || !verifySession(token, config.sessionSecret)) {
+    res.send(renderUserLogin("", config.turnstileSiteKey));
     return;
   }
 
+  const dbSession = db.getUserSessionByToken(token);
+  if (!dbSession || dbSession.revoked_at) {
+    res.send(renderUserLogin("Session has been revoked.", config.turnstileSiteKey));
+    return;
+  }
+
+  const user = db.getUserById(dbSession.user_id);
+  if (!user || user.is_suspended) {
+    res.send(renderUserLogin("User account suspended or invalid.", config.turnstileSiteKey));
+    return;
+  }
+
+  db.updateUserSessionLastActive(token);
+  
+  const keys = db.getUserKeys(user.id);
+  const keysWithStatus = keys.map(k => {
+    const activeHashes = getActivePlaybackHashes(k.token);
+    let activeStreamTitle = null;
+    if (activeHashes.length > 0) {
+      // Find latest watch history entry for this key
+      const latestHistory = db.getWatchHistoryForKey(k.id, 5);
+      const activeEntry = latestHistory.find(h => activeHashes.includes(h.playback_token_hash));
+      if (activeEntry) {
+        const episodeLabel = Number.isInteger(activeEntry.season) && Number.isInteger(activeEntry.episode)
+          ? `S${String(activeEntry.season).padStart(2, "0")}E${String(activeEntry.episode).padStart(2, "0")}`
+          : "";
+        activeStreamTitle = activeEntry.media_title + (episodeLabel ? ` (${episodeLabel})` : "");
+      } else {
+        activeStreamTitle = "Active Stream";
+      }
+    }
+    const watchHistory = db.getWatchHistoryForKey(k.id, 10);
+    return {
+      ...k,
+      activeStreamCount: activeHashes.length,
+      activeStreamTitle,
+      watchHistory
+    };
+  });
+
+  const sessions = db.getActiveUserSessions(user.id);
+  const tab = req.query.tab || "dashboard";
+  res.send(renderUserDashboard({
+    baseUrl: getBaseUrl(req),
+    user,
+    keys: keysWithStatus,
+    sessions,
+    currentSessionToken: token,
+    message: req.query.msg || "",
+    activeTab: tab,
+    timezone: config.timezone,
+  }));
+});
+
+app.post("/login", async (req, res) => {
+  const isHuman = await verifyTurnstile(req);
+  if (!isHuman) {
+    res.status(400).send(renderUserLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
+    return;
+  }
+
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+
+  const user = db.getUserByUsername(username);
+  if (!user) {
+    res.status(401).send(renderUserLogin("Invalid username or password.", config.turnstileSiteKey));
+    return;
+  }
+
+  if (user.is_suspended) {
+    res.status(401).send(renderUserLogin("Your account has been suspended.", config.turnstileSiteKey));
+    return;
+  }
+
+  if (!timingSafeCompare(hashPassword(password), user.password_hash)) {
+    res.status(401).send(renderUserLogin("Invalid username or password.", config.turnstileSiteKey));
+    return;
+  }
+
+  const session = issueSession(config.sessionSecret, config.sessionTtlMs);
+  const userAgent = req.headers["user-agent"] || "Unknown User Agent";
+  const ipAddress = req.ip || req.socket.remoteAddress || "Unknown IP";
+  const name = getSessionName(req);
+
+  db.createUserSession(session, user.id, name, userAgent, ipAddress);
+
+  setCookie(res, "user_session", session, { maxAge: config.sessionTtlMs });
+  res.redirect("/");
+});
+
+app.post("/logout", requireUser, (req, res) => {
+  const cookies = parseCookies(req);
+  const token = cookies.user_session;
+  if (token) {
+    const dbSession = db.getUserSessionByToken(token);
+    if (dbSession) {
+      db.revokeUserSession(dbSession.id);
+    }
+  }
+  clearCookie(res, "user_session");
+  res.redirect("/");
+});
+
+app.post("/user/keys", requireUser, (req, res) => {
+  const name = String(req.body.name || "").trim();
+  if (!name) {
+    res.redirect("/?msg=" + encodeURIComponent("Key name is required."));
+    return;
+  }
+
+  const keys = db.getUserKeys(req.user.id);
+  if (keys.length >= (req.user.max_keys || 5)) {
+    res.redirect("/?msg=" + encodeURIComponent("Key limit reached. Revoke an existing key first."));
+    return;
+  }
+
+  db.createUserKey(req.user.id, name);
+  res.redirect("/?msg=" + encodeURIComponent(`Key "${name}" created successfully.`));
+});
+
+app.post("/user/keys/:id/toggle-pause", requireUser, (req, res) => {
+  const keyId = Number(req.params.id);
+  const keys = db.getUserKeys(req.user.id);
+  const key = keys.find(k => k.id === keyId);
+  if (!key) {
+    res.redirect("/?msg=" + encodeURIComponent("Key not found."));
+    return;
+  }
+
+  if (key.paused_at) {
+    db.resumeUserKey(keyId, req.user.id);
+    res.redirect("/?msg=" + encodeURIComponent(`Key "${key.name}" resumed successfully.`));
+  } else {
+    db.pauseUserKey(keyId, req.user.id);
+    res.redirect("/?msg=" + encodeURIComponent(`Key "${key.name}" frozen successfully.`));
+  }
+});
+
+app.post("/user/keys/:id/revoke", requireUser, (req, res) => {
+  const keyId = Number(req.params.id);
+  const keys = db.getUserKeys(req.user.id);
+  const key = keys.find(k => k.id === keyId);
+  if (!key) {
+    res.redirect("/?msg=" + encodeURIComponent("Key not found."));
+    return;
+  }
+
+  db.revokeUserKey(keyId, req.user.id);
+  res.redirect("/?msg=" + encodeURIComponent(`Key "${key.name}" revoked successfully.`));
+});
+
+app.post("/user/keys/:id/rename", requireUser, (req, res) => {
+  const keyId = Number(req.params.id);
+  const keys = db.getUserKeys(req.user.id);
+  const key = keys.find(k => k.id === keyId);
+  if (!key) {
+    res.redirect("/?msg=" + encodeURIComponent("Key not found."));
+    return;
+  }
+
+  const name = String(req.body.name || "").trim();
+  if (!name) {
+    res.redirect("/?msg=" + encodeURIComponent("Key name is required."));
+    return;
+  }
+
+  db.renameUserKey(keyId, req.user.id, name);
+  res.redirect("/?msg=" + encodeURIComponent(`Key renamed to "${name}" successfully.`));
+});
+
+app.post("/user/reset-password", requireUser, (req, res) => {
+  const currentPassword = String(req.body.currentPassword || "");
+  const newPassword = String(req.body.newPassword || "");
+  const repeatNewPassword = String(req.body.repeatNewPassword || "");
+
+  if (!timingSafeCompare(hashPassword(currentPassword), req.user.password_hash)) {
+    res.redirect("/?tab=security&msg=" + encodeURIComponent("Current password is incorrect."));
+    return;
+  }
+
+  if (newPassword !== repeatNewPassword) {
+    res.redirect("/?tab=security&msg=" + encodeURIComponent("New passwords do not match."));
+    return;
+  }
+
+  if (newPassword.length < 4) {
+    res.redirect("/?tab=security&msg=" + encodeURIComponent("Password must be at least 4 characters long."));
+    return;
+  }
+
+  db.setUserPassword(req.user.id, hashPassword(newPassword));
+  res.redirect("/?tab=security&msg=" + encodeURIComponent("Password changed successfully."));
+});
+
+app.post("/user/sessions/:id/rename", requireUser, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getUserSessionById(sessionId);
+
+  if (!session || session.revoked_at || session.user_id !== req.user.id) {
+    res.redirect(`/?tab=sessions&msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  const name = String(req.body.name || "").trim() || "Untitled Session";
+  db.renameUserSession(sessionId, req.user.id, name);
+  res.redirect(`/?tab=sessions&msg=${encodeURIComponent("Session renamed successfully.")}`);
+});
+
+app.post("/user/sessions/:id/revoke", requireUser, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getUserSessionById(sessionId);
+
+  if (!session || session.revoked_at || session.user_id !== req.user.id) {
+    res.redirect(`/?tab=sessions&msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  db.revokeUserSession(sessionId, req.user.id);
+
+  const cookies = parseCookies(req);
+  if (session.token === cookies.user_session) {
+    clearCookie(res, "user_session");
+    res.redirect("/");
+    return;
+  }
+
+  res.redirect(`/?tab=sessions&msg=${encodeURIComponent("Session revoked successfully.")}`);
+});
+
+// --- ADMIN API ENDPOINTS ---
+app.get("/admin/api/users/:id", requireAdmin, async (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+  if (!user) {
+    res.status(404).json({ err: "User not found" });
+    return;
+  }
+
+  const keys = db.getUserKeys(userId);
   const historyLimit = getWatchHistoryLimit(req);
-  const watchHistory = db.getWatchHistoryForKey(key.id, historyLimit);
+  const watchHistory = db.getWatchHistoryForUser(userId, historyLimit);
+
+  let activeStreams = 0;
+  let activePlaybackHashes = [];
+  for (const k of keys) {
+    activeStreams += getActiveStreamCount(k.token);
+    activePlaybackHashes.push(...getActivePlaybackHashes(k.token));
+  }
 
   res.json({
-    activeStreams: getActiveStreamCount(key.token),
-    activePlaybackHashes: getActivePlaybackHashes(key.token),
-    paused: Boolean(key.paused_at),
-    maxConcurrentStreams: key.max_concurrent_streams,
+    activeStreams,
+    activePlaybackHashes,
     watchHistory,
   });
 });
 
 app.get("/admin/api/status", requireAdmin, async (req, res) => {
-  const activeKeys = db.getActiveKeys()
-    .map((key) => ({
-      id: key.id,
-      activeStreams: getActiveStreamCount(key.token),
-      paused: Boolean(key.paused_at),
-      last_active_at: key.last_active_at,
-    }))
-    .sort((a, b) => {
-      const aActive = a.activeStreams > 0;
-      const bActive = b.activeStreams > 0;
-      if (aActive && !bActive) return -1;
-      if (!aActive && bActive) return 1;
+  const users = db.getAllUsers().map((user) => {
+    const keys = db.getUserKeys(user.id);
+    let activeStreams = 0;
+    for (const k of keys) {
+      activeStreams += getActiveStreamCount(k.token);
+    }
+    return {
+      id: user.id,
+      username: user.username,
+      bandwidth_limit: user.bandwidth_limit,
+      bandwidth_used: user.bandwidth_used,
+      bandwidth_reset_at: user.bandwidth_reset_at,
+      is_suspended: user.is_suspended,
+      created_at: user.created_at,
+      max_keys: user.max_keys,
+      activeStreams,
+      keysCount: keys.length,
+    };
+  });
 
-            const aTime = a.last_active_at || "";
-      const bTime = b.last_active_at || "";
-      if (aTime !== bTime) return bTime < aTime ? -1 : 1;
-
-            return b.id - a.id;
-    });
-
-  const totalActiveStreams = activeKeys.reduce((acc, key) => acc + key.activeStreams, 0);
-
+  const totalActiveStreams = users.reduce((acc, u) => acc + u.activeStreams, 0);
   const postgresStats = await getPostgresStats(config);
 
   res.json({
     bitmagnet: await bitmagnet.getStatus(),
     totalActiveStreams,
-    activeKeys,
+    users,
     postgres: postgresStats,
   });
 });
@@ -548,7 +868,6 @@ async function proxyToBitmagnet(req, res, targetPath) {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("text/html")) {
       let html = await response.text();
-      // Dynamically align the base href to the proxy's current request path
       const baseHref = req.path.endsWith("/") ? req.path : `${req.path}/`;
       html = html.replace(/<base href="[^"]*"/, `<base href="${baseHref}"`);
 
@@ -609,265 +928,7 @@ app.all("/api/*splat", requireAdmin, async (req, res) => {
   proxyToBitmagnet(req, res, req.originalUrl);
 });
 
-app.get("/admin", (req, res) => {
-  const cookies = parseCookies(req);
-  const token = cookies.admin_session;
-  if (!token || !verifySession(token, config.sessionSecret)) {
-    res.send(renderLogin("", config.turnstileSiteKey));
-    return;
-  }
-
-  const dbSession = db.getSessionByToken(token);
-  if (!dbSession || dbSession.revoked_at) {
-    res.send(renderLogin("Session has been revoked.", config.turnstileSiteKey));
-    return;
-  }
-
-  db.updateSessionLastActive(token);
-  renderAdmin(req, res);
-});
-
-function getSessionName(req) {
-  const ua = req.headers["user-agent"] || "";
-  
-  // Basic user agent parsing
-  let browser = "Unknown Browser";
-  if (ua.includes("Firefox/")) browser = "Firefox";
-  else if (ua.includes("Chrome/")) browser = "Chrome";
-  else if (ua.includes("Safari/")) browser = "Safari";
-  else if (ua.includes("Edge/")) browser = "Edge";
-  else if (ua.includes("Opera/") || ua.includes("OPR/")) browser = "Opera";
-
-  let os = "Unknown OS";
-  if (ua.includes("Windows NT")) os = "Windows";
-  else if (ua.includes("Macintosh") || ua.includes("Mac OS X")) os = "macOS";
-  else if (ua.includes("Linux")) os = "Linux";
-  else if (ua.includes("Android")) os = "Android";
-  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
-
-  return `${browser} on ${os}`;
-}
-
-app.post("/admin/login", async (req, res) => {
-  if (config.turnstileSecretKey && config.turnstileSiteKey) {
-    const turnstileResponse = req.body["cf-turnstile-response"] || "";
-    const remoteIp = req.ip || req.socket.remoteAddress || "";
-
-    let isHuman = false;
-    try {
-      const verifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
-      const verifyResponse = await fetch(verifyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          secret: config.turnstileSecretKey,
-          response: turnstileResponse,
-          remoteip: remoteIp,
-        }),
-      });
-      const data = await verifyResponse.json();
-      isHuman = !!data.success;
-    } catch (error) {
-      console.error("[turnstile] Verification failed with error:", error);
-    }
-
-    if (!isHuman) {
-      res.status(400).send(renderLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
-      return;
-    }
-  }
-
-  const provided = String(req.body.password || "");
-  if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
-    res.status(401).send(renderLogin("Invalid password.", config.turnstileSiteKey));
-    return;
-  }
-
-  const session = issueSession(config.sessionSecret, config.sessionTtlMs);
-  const userAgent = req.headers["user-agent"] || "Unknown User Agent";
-  const ipAddress = req.ip || req.socket.remoteAddress || "Unknown IP";
-  const name = getSessionName(req);
-
-  db.createSession(session, name, userAgent, ipAddress);
-
-  setCookie(res, "admin_session", session, { maxAge: config.sessionTtlMs });
-  res.redirect("/admin");
-});
-
-app.post("/admin/logout", requireAdmin, (req, res) => {
-  const cookies = parseCookies(req);
-  const token = cookies.admin_session;
-  if (token) {
-    const dbSession = db.getSessionByToken(token);
-    if (dbSession) {
-      db.revokeSession(dbSession.id);
-    }
-  }
-  clearCookie(res, "admin_session");
-  res.redirect("/admin");
-});
-
-app.get("/admin/sessions", requireAdmin, (req, res) => {
-  const cookies = parseCookies(req);
-  const currentSessionToken = cookies.admin_session;
-  const sessions = db.getActiveSessions();
-
-  res.send(
-    renderSessions({
-      sessions,
-      currentSessionToken,
-      timezone: config.timezone,
-      message: adminMessage(req),
-    })
-  );
-});
-
-app.post("/admin/sessions/:id/rename", requireAdmin, (req, res) => {
-  const sessionId = Number(req.params.id);
-  const session = db.getSessionById(sessionId);
-
-  if (!session || session.revoked_at) {
-    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
-    return;
-  }
-
-  const name = String(req.body.name || "").trim() || "Untitled Session";
-  db.renameSession(sessionId, name);
-  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session renamed successfully.")}`);
-});
-
-app.post("/admin/sessions/:id/revoke", requireAdmin, (req, res) => {
-  const sessionId = Number(req.params.id);
-  const session = db.getSessionById(sessionId);
-
-  if (!session || session.revoked_at) {
-    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
-    return;
-  }
-
-  db.revokeSession(sessionId);
-
-  const cookies = parseCookies(req);
-  if (session.token === cookies.admin_session) {
-    clearCookie(res, "admin_session");
-    res.redirect("/admin");
-    return;
-  }
-
-  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session revoked successfully.")}`);
-});
-
-app.post("/admin/keys", requireAdmin, (req, res) => {
-  const name = String(req.body.name || "").trim() || "Untitled Key";
-  db.createAddonKey(name, generateOpaqueToken(), 1, false);
-  redirectToAdmin(res, "Addon key created.");
-});
-
-app.get("/admin/keys/:id", requireAdmin, async (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  await renderKeyAdmin(req, res, key);
-});
-
-app.post("/admin/keys/:id/settings", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-  const maxConcurrentStreams = Number(req.body.maxConcurrentStreams);
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  if (!Number.isInteger(maxConcurrentStreams) || maxConcurrentStreams < 1) {
-    const historyLimit = getWatchHistoryLimit(req);
-    const watchHistory = db.getWatchHistoryForKey(key.id, historyLimit + 1);
-
-    res.status(400).send(
-      renderKeyDetails({
-        baseUrl: getBaseUrl(req),
-        key,
-        activeStreams: getActiveStreamCount(key.token),
-        watchHistory: watchHistory.slice(0, historyLimit),
-        watchHistoryHasMore: watchHistory.length > historyLimit,
-        watchHistoryLimit: historyLimit,
-        watchHistoryStep: WATCH_HISTORY_LIMIT_STEP,
-        message: "Concurrency limit must be a whole number of at least 1.",
-        timezone: config.timezone,
-      }),
-    );
-    return;
-  }
-
-  db.updateKeyLimit(keyId, maxConcurrentStreams);
-  res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("Key settings updated.")}`);
-});
-
-app.post("/admin/keys/:id/rename", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-  const name = String(req.body.name || "").trim() || "Untitled Key";
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  db.renameKey(keyId, name);
-  res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("Key renamed successfully.")}`);
-});
-
-app.post("/admin/keys/:id/pause", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  db.pauseKey(keyId);
-  res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("Key paused.")}`);
-});
-
-app.post("/admin/keys/:id/resume", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  db.resumeKey(keyId);
-  res.redirect(`/admin/keys/${keyId}?msg=${encodeURIComponent("Key resumed.")}`);
-});
-
-app.post("/admin/keys/:id/revoke", requireAdmin, (req, res) => {
-  const keyId = Number(req.params.id);
-  const key = db.getKeyById(keyId);
-  const confirmName = String(req.body.confirmName || "").trim();
-
-  if (!key || key.revoked_at) {
-    redirectToAdmin(res, "Key not found.");
-    return;
-  }
-
-  if (confirmName !== key.name) {
-    redirectToAdmin(res, `Revocation blocked. Type the exact key name: ${key.name}`);
-    return;
-  }
-
-  db.revokeKey(keyId);
-  redirectToAdmin(res, "Addon key revoked.");
-});
-
+// --- STATIC AND STREAM PLAYBACK ROUTING ---
 app.get("/static/favicon.svg", (_req, res) => {
   res.type("image/svg+xml").send(`
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -974,6 +1035,33 @@ app.get("/play/:token", async (req, res) => {
       return;
     }
 
+    if (key.user_id) {
+      const user = db.getUserById(key.user_id);
+      if (user) {
+        db.checkAndResetBandwidth(user);
+        if (user.is_suspended) {
+          console.error(`[play] user suspended user=${user.username} ip=${req.ip}`);
+          sendBlockedPlaybackVideo(req, res, key, "suspended");
+          return;
+        }
+
+        const needed = (payload.stream && payload.stream.sizeBytes) ? payload.stream.sizeBytes : 0;
+        const remaining = Math.max(0, user.bandwidth_limit - user.bandwidth_used);
+
+        if (user.bandwidth_used >= user.bandwidth_limit) {
+          console.error(`[play] bandwidth limit exceeded user=${user.username} ip=${req.ip}`);
+          sendBlockedPlaybackVideo(req, res, key, "bandwidth", needed, user);
+          return;
+        }
+
+        if (needed > 0 && remaining < needed) {
+          console.error(`[play] insufficient bandwidth size=${needed} remaining=${remaining} user=${user.username} ip=${req.ip}`);
+          sendBlockedPlaybackVideo(req, res, key, "insufficient_bandwidth", needed, user);
+          return;
+        }
+      }
+    }
+
     if (!payload.stream || !payload.stream.magnetUri) {
       console.error(`[play] missing stream payload key=${key.name} ip=${req.ip}`);
       res.status(404).send("Stream source not found.");
@@ -987,9 +1075,9 @@ app.get("/play/:token", async (req, res) => {
     }
 
     const activeStreamCount = getActiveStreamCount(key.token);
-    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= key.max_concurrent_streams) {
+    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= 1) {
       console.error(
-        `[play] concurrency blocked key=${JSON.stringify(key.name)} active=${activeStreamCount} limit=${key.max_concurrent_streams} ip=${JSON.stringify(req.ip)}`,
+        `[play] concurrency blocked key=${JSON.stringify(key.name)} active=${activeStreamCount} limit=1 ip=${JSON.stringify(req.ip)}`,
       );
       sendBlockedPlaybackVideo(req, res, key, "limit");
       return;
@@ -1023,6 +1111,42 @@ app.get("/play/:token", async (req, res) => {
 
     db.updateKeyLastActive(key.id);
 
+    // Track bandwidth usage on write/end
+    let bytesSent = 0;
+    let recordedBytes = 0;
+    const originalWrite = res.write;
+    const originalEnd = res.end;
+
+    res.write = function (chunk, encoding, callback) {
+      if (chunk && typeof chunk !== "function") {
+        bytesSent += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+      }
+      return originalWrite.apply(this, arguments);
+    };
+
+    res.end = function (chunk, encoding, callback) {
+      if (chunk && typeof chunk !== "function") {
+        bytesSent += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+      }
+      const diff = bytesSent - recordedBytes;
+      if (diff > 0 && key.user_id) {
+        db.incrementBandwidth(key.user_id, key.id, diff);
+        recordedBytes = bytesSent;
+      }
+      return originalEnd.apply(this, arguments);
+    };
+
+    const recordBandwidthOnClose = () => {
+      const diff = bytesSent - recordedBytes;
+      if (diff > 0 && key.user_id) {
+        db.incrementBandwidth(key.user_id, key.id, diff);
+        recordedBytes = bytesSent;
+      }
+    };
+
+    res.on("close", recordBandwidthOnClose);
+    res.on("finish", recordBandwidthOnClose);
+
     const releaseTrackedStream = beginTrackedStream(key.token, req.params.token, req, res);
     req.on("aborted", releaseTrackedStream);
     req.on("close", releaseTrackedStream);
@@ -1034,9 +1158,12 @@ app.get("/play/:token", async (req, res) => {
     console.log(`[play] stream finished infoHash=${JSON.stringify(infoHash)}`);
   } catch (error) {
     console.error(`[play] stream failed error=${JSON.stringify(error.message)}`);
-    res.status(500).send(`Stream failed: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).send(`Stream failed: ${error.message}`);
+    }
   }
 });
+
 app.head("/play/:token", async (req, res) => {
   try {
     const payload = verifyPlaybackToken(req.params.token, config.sessionSecret);
@@ -1053,13 +1180,37 @@ app.head("/play/:token", async (req, res) => {
       return;
     }
 
+    if (key.user_id) {
+      const user = db.getUserById(key.user_id);
+      if (user) {
+        db.checkAndResetBandwidth(user);
+        if (user.is_suspended) {
+          sendBlockedPlaybackVideo(req, res, key, "suspended");
+          return;
+        }
+
+        const needed = (payload.stream && payload.stream.sizeBytes) ? payload.stream.sizeBytes : 0;
+        const remaining = Math.max(0, user.bandwidth_limit - user.bandwidth_used);
+
+        if (user.bandwidth_used >= user.bandwidth_limit) {
+          sendBlockedPlaybackVideo(req, res, key, "bandwidth", needed, user);
+          return;
+        }
+
+        if (needed > 0 && remaining < needed) {
+          sendBlockedPlaybackVideo(req, res, key, "insufficient_bandwidth", needed, user);
+          return;
+        }
+      }
+    }
+
     if (key.paused_at) {
       sendBlockedPlaybackVideo(req, res, key, "paused");
       return;
     }
 
     const activeStreamCount = getActiveStreamCount(key.token);
-    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= key.max_concurrent_streams) {
+    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= 1) {
       sendBlockedPlaybackVideo(req, res, key, "limit");
       return;
     }
@@ -1075,6 +1226,274 @@ app.head("/play/:token", async (req, res) => {
   } catch (_error) {
     res.status(500).end();
   }
+});
+
+// --- ADMIN ACCESS ROUTING ---
+app.get("/admin", (req, res) => {
+  const cookies = parseCookies(req);
+  const token = cookies.admin_session;
+  if (!token || !verifySession(token, config.sessionSecret)) {
+    res.send(renderLogin("", config.turnstileSiteKey));
+    return;
+  }
+
+  const dbSession = db.getSessionByToken(token);
+  if (!dbSession || dbSession.revoked_at) {
+    res.send(renderLogin("Session has been revoked.", config.turnstileSiteKey));
+    return;
+  }
+
+  db.updateSessionLastActive(token);
+  renderAdmin(req, res);
+});
+
+function getSessionName(req) {
+  const ua = req.headers["user-agent"] || "";
+  let browser = "Unknown Browser";
+  if (ua.includes("Firefox/")) browser = "Firefox";
+  else if (ua.includes("Chrome/")) browser = "Chrome";
+  else if (ua.includes("Safari/")) browser = "Safari";
+  else if (ua.includes("Edge/")) browser = "Edge";
+  else if (ua.includes("Opera/") || ua.includes("OPR/")) browser = "Opera";
+
+  let os = "Unknown OS";
+  if (ua.includes("Windows NT")) os = "Windows";
+  else if (ua.includes("Macintosh") || ua.includes("Mac OS X")) os = "macOS";
+  else if (ua.includes("Linux")) os = "Linux";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) os = "iOS";
+
+  return `${browser} on ${os}`;
+}
+
+app.post("/admin/login", async (req, res) => {
+  const isHuman = await verifyTurnstile(req);
+  if (!isHuman) {
+    res.status(400).send(renderLogin("Turnstile verification failed. Please try again.", config.turnstileSiteKey));
+    return;
+  }
+
+  const provided = String(req.body.password || "");
+  if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
+    res.status(401).send(renderLogin("Invalid password.", config.turnstileSiteKey));
+    return;
+  }
+
+  const session = issueSession(config.sessionSecret, config.sessionTtlMs);
+  const userAgent = req.headers["user-agent"] || "Unknown User Agent";
+  const ipAddress = req.ip || req.socket.remoteAddress || "Unknown IP";
+  const name = getSessionName(req);
+
+  db.createSession(session, name, userAgent, ipAddress);
+
+  setCookie(res, "admin_session", session, { maxAge: config.sessionTtlMs });
+  res.redirect("/admin");
+});
+
+app.post("/admin/logout", requireAdmin, (req, res) => {
+  const cookies = parseCookies(req);
+  const token = cookies.admin_session;
+  if (token) {
+    const dbSession = db.getSessionByToken(token);
+    if (dbSession) {
+      db.revokeSession(dbSession.id);
+    }
+  }
+  clearCookie(res, "admin_session");
+  res.redirect("/admin");
+});
+
+app.get("/admin/sessions", requireAdmin, (req, res) => {
+  const cookies = parseCookies(req);
+  const currentSessionToken = cookies.admin_session;
+  const sessions = db.getActiveSessions();
+
+  res.send(
+    renderSessions({
+      sessions,
+      currentSessionToken,
+      timezone: config.timezone,
+      message: adminMessage(req),
+    })
+  );
+});
+
+app.post("/admin/sessions/:id/rename", requireAdmin, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getSessionById(sessionId);
+
+  if (!session || session.revoked_at) {
+    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  const name = String(req.body.name || "").trim() || "Untitled Session";
+  db.renameSession(sessionId, name);
+  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session renamed successfully.")}`);
+});
+
+app.post("/admin/sessions/:id/revoke", requireAdmin, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = db.getSessionById(sessionId);
+
+  if (!session || session.revoked_at) {
+    res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session not found.")}`);
+    return;
+  }
+
+  db.revokeSession(sessionId);
+
+  const cookies = parseCookies(req);
+  if (session.token === cookies.admin_session) {
+    clearCookie(res, "admin_session");
+    res.redirect("/admin");
+    return;
+  }
+
+  res.redirect(`/admin/sessions?msg=${encodeURIComponent("Session revoked successfully.")}`);
+});
+
+// --- ADMIN USER MANAGEMENT ROUTING ---
+app.post("/admin/users", requireAdmin, (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+  const bandwidthLimitGb = Number(req.body.bandwidthLimitGb);
+  const maxKeys = Number(req.body.maxKeys || 5);
+
+  if (!username || !password || isNaN(bandwidthLimitGb) || bandwidthLimitGb < 1 || isNaN(maxKeys) || maxKeys < 1) {
+    redirectToAdmin(res, "Invalid input data.");
+    return;
+  }
+
+  const existing = db.getUserByUsername(username);
+  if (existing) {
+    redirectToAdmin(res, "Username already exists.");
+    return;
+  }
+
+  const limitBytes = bandwidthLimitGb * 1024 * 1024 * 1024;
+  db.createUser(username, hashPassword(password), limitBytes, maxKeys);
+  redirectToAdmin(res, `User ${username} created successfully.`);
+});
+
+app.get("/admin/users/:id", requireAdmin, async (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  await renderUserAdmin(req, res, user);
+});
+
+app.post("/admin/users/:id/quota", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+  const bandwidthLimitGb = Number(req.body.bandwidthLimitGb);
+  const maxKeys = Number(req.body.maxKeys || 5);
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  if (isNaN(bandwidthLimitGb) || bandwidthLimitGb < 1) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Limit must be at least 1 GB.")}`);
+    return;
+  }
+  if (isNaN(maxKeys) || maxKeys < 1) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Max keys must be at least 1.")}`);
+    return;
+  }
+
+  const limitBytes = bandwidthLimitGb * 1024 * 1024 * 1024;
+  db.setUserLimits(userId, limitBytes, maxKeys);
+  res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Quota updated successfully.")}`);
+});
+
+app.post("/admin/users/:id/reset-bandwidth", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  db.resetUserBandwidth(userId);
+  
+  const referer = req.headers.referer || "";
+  if (referer.includes(`/admin/users/${userId}`)) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Bandwidth usage reset to 0.")}`);
+  } else {
+    res.redirect(`/admin?msg=${encodeURIComponent(`Bandwidth usage reset for ${user.username}.`)}`);
+  }
+});
+
+app.post("/admin/users/:id/password", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+  const password = String(req.body.password || "");
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  if (password.length < 4) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Password must be at least 4 characters long.")}`);
+    return;
+  }
+
+  db.setUserPassword(userId, hashPassword(password));
+  res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent("Password set successfully.")}`);
+});
+
+app.post("/admin/users/:id/toggle-status", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  const nextSuspendedState = !user.is_suspended;
+  if (user.is_suspended) {
+    db.unsuspendUser(userId);
+  } else {
+    db.suspendUser(userId);
+    db.raw.prepare(`UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ?`).run(userId);
+  }
+
+  const referer = req.headers.referer || "";
+  const statusStr = nextSuspendedState ? "suspended" : "activated";
+  if (referer.includes(`/admin/users/${userId}`)) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent(`User account ${statusStr}.`)}`);
+  } else {
+    res.redirect(`/admin?msg=${encodeURIComponent(`User account ${statusStr} for ${user.username}.`)}`);
+  }
+});
+
+app.post("/admin/users/:id/delete", requireAdmin, (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.getUserById(userId);
+  const confirmUsername = String(req.body.confirmUsername || "").trim();
+
+  if (!user) {
+    redirectToAdmin(res, "User not found.");
+    return;
+  }
+
+  if (confirmUsername !== user.username) {
+    res.redirect(`/admin/users/${userId}?msg=${encodeURIComponent(`Deletion blocked. Type exact username: ${user.username}`)}`);
+    return;
+  }
+
+  db.deleteUser(userId);
+  redirectToAdmin(res, `User ${user.username} deleted.`);
 });
 
 app.get("/health", async (_req, res) => {
