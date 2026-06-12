@@ -31,8 +31,8 @@ services:
       - BASE_URL=https://bitlab.dill.moe
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SESSION_SECRET=${SESSION_SECRET}
-      - CAP_SITE_KEY=${CAP_SITE_KEY:-}
-      - CAP_SECRET_KEY=${CAP_SECRET_KEY:-}
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       - BITMAGNET_URL=http://localhost:3333
       - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
       - TORRENT_CACHE_RESERVE_GB=10

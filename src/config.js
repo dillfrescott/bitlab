@@ -68,8 +68,8 @@ function getConfig() {
     ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
-    capSiteKey: process.env.CAP_SITE_KEY || "",
-    capSecretKey: process.env.CAP_SECRET_KEY || "",
+    turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || "",
+    turnstileSecretKey: process.env.TURNSTILE_SECRET_KEY || "",
     sessionSecret: (function() {
       if (process.env.SESSION_SECRET) {
         return process.env.SESSION_SECRET;
