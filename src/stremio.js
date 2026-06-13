@@ -20,15 +20,6 @@ function validateAddonKey(db, token) {
   if (!key || key.revoked_at) {
     return null;
   }
-  if (key.user_id) {
-    const user = db.getUserById(key.user_id);
-    if (user) {
-      db.checkAndResetBandwidth(user);
-      if (user.is_suspended || user.bandwidth_used >= user.bandwidth_limit) {
-        return null;
-      }
-    }
-  }
   return key;
 }
 
@@ -192,30 +183,6 @@ function formatStreamTitle(release, options = {}) {
       if (Number.isInteger(s)) parts.push(`Season ${s}`);
       if (Number.isInteger(e)) parts.push(`Episode ${e}`);
       lines.push(parts.join(" | "));
-    }
-  }
-
-  if (options.user) {
-    const user = options.user;
-    const limit = user.bandwidth_limit;
-    const used = user.bandwidth_used;
-    const remaining = Math.max(0, limit - used);
-
-    const remGiB = (remaining / (1024 ** 3)).toFixed(2);
-    const limitGiB = (limit / (1024 ** 3)).toFixed(2);
-
-    const percentRemaining = Math.min(100, Math.max(0, Math.round((remaining / limit) * 100)));
-
-    if (release.sizeBytes && Number.isFinite(release.sizeBytes)) {
-      const fits = remaining >= release.sizeBytes;
-      if (fits) {
-        lines.push(`Quota: ${remGiB}/${limitGiB} GB Left (${percentRemaining}%)`);
-      } else {
-        const neededGiB = (release.sizeBytes / (1024 ** 3)).toFixed(2);
-        lines.push(`Quota: ${remGiB}/${limitGiB} GB Left (${percentRemaining}%) ⚠️ Needs ${neededGiB} GB`);
-      }
-    } else {
-      lines.push(`Quota: ${remGiB}/${limitGiB} GB Left (${percentRemaining}%)`);
     }
   }
 
@@ -1319,13 +1286,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       );
     }
 
-    const keyToken = args.config.keyToken;
-    const key = keyToken ? db.getKeyByToken(keyToken) : null;
-    const user = key?.user_id ? db.getUserById(key.user_id) : null;
-    if (user) {
-      db.checkAndResetBandwidth(user);
-    }
-
     const streams = releases.flatMap((release) => {
       const token = createPlaybackToken({
         keyToken: args.config.keyToken,
@@ -1356,7 +1316,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           mediaTitle: media.title,
           season,
           episode,
-          user,
         }),
         url: `${args.config.baseUrl}/play/${token}`,
         behaviorHints: {
