@@ -25,7 +25,6 @@ function openDatabase(config) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       token TEXT NOT NULL UNIQUE,
-      max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
       bandwidth_used INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_active_at TEXT,
@@ -83,7 +82,6 @@ function openDatabase(config) {
     );
   `);
 
-  ensureColumn(db, "addon_keys", "max_concurrent_streams", "max_concurrent_streams INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "addon_keys", "last_active_at", "last_active_at TEXT");
   ensureColumn(db, "addon_keys", "paused_at", "paused_at TEXT");
   ensureColumn(db, "addon_keys", "user_id", "user_id INTEGER REFERENCES users(id) ON DELETE CASCADE");
@@ -101,12 +99,12 @@ function openDatabase(config) {
 
   const stmts = {
     createKey: db.prepare(`
-      INSERT INTO addon_keys (name, token, max_concurrent_streams)
-      VALUES (?, ?, ?)
+      INSERT INTO addon_keys (name, token)
+      VALUES (?, ?)
     `),
     createKeyWithUser: db.prepare(`
-      INSERT INTO addon_keys (name, token, max_concurrent_streams, user_id)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO addon_keys (name, token, user_id)
+      VALUES (?, ?, ?)
     `),
     revokeKey: db.prepare(`
       UPDATE addon_keys
@@ -114,7 +112,7 @@ function openDatabase(config) {
       WHERE id = ? AND revoked_at IS NULL
     `),
     getActiveKeys: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, bandwidth_used, created_at, last_active_at, paused_at, user_id
+      SELECT id, name, token, bandwidth_used, created_at, last_active_at, paused_at, user_id
       FROM addon_keys
       WHERE revoked_at IS NULL
       ORDER BY id DESC
@@ -127,19 +125,14 @@ function openDatabase(config) {
       LIMIT 20
     `),
     getKeyByToken: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
+      SELECT id, name, token, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
       FROM addon_keys
       WHERE token = ?
     `),
     getKeyById: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
+      SELECT id, name, token, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
       FROM addon_keys
       WHERE id = ?
-    `),
-    updateKeyLimit: db.prepare(`
-      UPDATE addon_keys
-      SET max_concurrent_streams = ?
-      WHERE id = ? AND revoked_at IS NULL
     `),
     updateKeyLastActive: db.prepare(`
       UPDATE addon_keys
@@ -203,12 +196,12 @@ function openDatabase(config) {
     `),
   };
 
-  function createAddonKey(name, token, maxConcurrentStreams = 1, userId = null) {
+  function createAddonKey(name, token, userId = null) {
     if (userId !== null) {
-      const result = stmts.createKeyWithUser.run(name, token, maxConcurrentStreams, userId);
+      const result = stmts.createKeyWithUser.run(name, token, userId);
       return Number(result.lastInsertRowid);
     }
-    const result = stmts.createKey.run(name, token, maxConcurrentStreams);
+    const result = stmts.createKey.run(name, token);
     return Number(result.lastInsertRowid);
   }
 
@@ -243,9 +236,6 @@ function openDatabase(config) {
     },
     getKeyById(id) {
       return mapKey(stmts.getKeyById.get(id));
-    },
-    updateKeyLimit(id, maxConcurrentStreams) {
-      stmts.updateKeyLimit.run(maxConcurrentStreams, id);
     },
     updateKeyLastActive(id) {
       stmts.updateKeyLastActive.run(id);
@@ -443,7 +433,7 @@ function openDatabase(config) {
 
     getUserKey(userId) {
       return db.prepare(`
-        SELECT id, name, token, max_concurrent_streams, bandwidth_used, created_at, last_active_at, paused_at, revoked_at
+        SELECT id, name, token, bandwidth_used, created_at, last_active_at, paused_at, revoked_at
         FROM addon_keys
         WHERE user_id = ? AND revoked_at IS NULL
         ORDER BY id DESC
@@ -453,7 +443,7 @@ function openDatabase(config) {
 
     getUserKeys(userId) {
       return db.prepare(`
-        SELECT id, name, token, max_concurrent_streams, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
+        SELECT id, name, token, bandwidth_used, created_at, last_active_at, paused_at, revoked_at, user_id
         FROM addon_keys
         WHERE user_id = ? AND revoked_at IS NULL
         ORDER BY id DESC
@@ -463,8 +453,8 @@ function openDatabase(config) {
     createUserKey(userId, name) {
       const token = crypto.randomBytes(24).toString("base64url");
       return db.prepare(`
-        INSERT INTO addon_keys (name, token, max_concurrent_streams, user_id)
-        VALUES (?, ?, 1, ?)
+        INSERT INTO addon_keys (name, token, user_id)
+        VALUES (?, ?, ?)
       `).run(name, token, userId);
     },
 

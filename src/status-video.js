@@ -86,8 +86,7 @@ function generateVideo(outputPath, lines) {
 function getStatusVideoPath(config, options) {
   const cacheDir = path.join(config.dataDir, "status-videos");
   const keySlug = slugify(options.keyName);
-  const kind = ["paused", "suspended", "bandwidth", "insufficient_bandwidth", "intro", "limit"].includes(options.kind) ? options.kind : "limit";
-  const limitPart = Number.isInteger(options.limit) ? `-${options.limit}` : "";
+  const kind = ["paused", "suspended", "bandwidth", "insufficient_bandwidth", "intro"].includes(options.kind) ? options.kind : "intro";
 
   const usedGb = options.bandwidthUsed ? Math.round(options.bandwidthUsed / (1024 ** 3)) : 0;
   const limitGb = options.bandwidthLimit ? Math.round(options.bandwidthLimit / (1024 ** 3)) : 0;
@@ -95,9 +94,7 @@ function getStatusVideoPath(config, options) {
   const remainingGb = Math.max(0, limitGb - usedGb);
 
   let cacheKey = `${kind}-${keySlug}`;
-  if (kind === "limit") {
-    cacheKey += `${limitPart}`;
-  } else if (kind === "bandwidth" || kind === "insufficient_bandwidth" || kind === "intro") {
+  if (kind === "bandwidth" || kind === "insufficient_bandwidth" || kind === "intro") {
     cacheKey += `-u${usedGb}-l${limitGb}-n${neededGb}`;
   }
 
@@ -142,7 +139,7 @@ function getStatusVideoPath(config, options) {
         `Remaining: ${remainingGb}/${limitGb} GB [${bar}]`,
         `This video requires ${neededGb} GB to stream.`,
       ];
-    } else if (kind === "intro") {
+    } else {
       const percent = Math.min(100, Math.max(0, Math.round((remainingGb / limitGb) * 100))) || 0;
       const barLength = 10;
       const filledLength = Math.round((percent / 100) * barLength);
@@ -153,12 +150,6 @@ function getStatusVideoPath(config, options) {
         "Preparing Your Stream...",
         `Quota: ${remainingGb}/${limitGb} GB Left [${bar}]`,
         `Estimated usage: ${neededGb} GB`,
-      ];
-    } else {
-      lines = [
-        "Streaming limit reached",
-        `Key: ${options.keyName}`,
-        `This key is limited to ${options.limit} concurrent stream(s).`,
       ];
     }
     generateVideo(filePath, lines);

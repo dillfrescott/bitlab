@@ -1349,7 +1349,7 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
           <section class="main-grid" style="grid-template-columns: 1fr; margin-top: 24px;">
             <article class="panel">
               <h2 class="section-title">Create New Key</h2>
-              <p class="small" style="margin-bottom: 12px;">Generate a new addon key. Each key allows one concurrent stream and can be shared with someone.</p>
+              <p class="small" style="margin-bottom: 12px;">Generate a new addon key. Each key can be shared with someone.</p>
               <form method="post" action="/user/keys" style="display: flex; gap: 12px; align-items: flex-end;">
                 <label style="flex: 1; margin: 0;">
                   <span class="eyebrow" style="margin-bottom: 4px; display: block;">Key Name</span>

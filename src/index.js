@@ -305,7 +305,6 @@ function sendBlockedPlaybackVideo(req, res, key, reason, needed = 0, user = null
   const filePath = getStatusVideoPath(config, {
     kind: reason,
     keyName: key.name,
-    limit: key.max_concurrent_streams,
     bandwidthUsed: user ? user.bandwidth_used : undefined,
     bandwidthLimit: user ? user.bandwidth_limit : undefined,
     bandwidthNeeded: needed,
@@ -1111,14 +1110,6 @@ app.get("/play/:token", async (req, res) => {
       return;
     }
 
-    const activeStreamCount = getActiveStreamCount(key.token);
-    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= 1) {
-      console.error(
-        `[play] concurrency blocked key=${JSON.stringify(key.name)} active=${activeStreamCount} limit=1 ip=${JSON.stringify(req.ip)}`,
-      );
-      sendBlockedPlaybackVideo(req, res, key, "limit");
-      return;
-    }
 
     const rawHashMatch = String(payload.stream.magnetUri).match(/btih:([a-zA-Z0-9]+)/i);
     const infoHash = rawHashMatch ? rawHashMatch[1].toLowerCase() : "";
@@ -1246,11 +1237,6 @@ app.head("/play/:token", async (req, res) => {
       return;
     }
 
-    const activeStreamCount = getActiveStreamCount(key.token);
-    if (!isPlaybackTracked(key.token, req.params.token) && activeStreamCount >= 1) {
-      sendBlockedPlaybackVideo(req, res, key, "limit");
-      return;
-    }
 
     const rawHashMatch = String(payload.stream.magnetUri).match(/btih:([a-zA-Z0-9]+)/i);
     const infoHash = rawHashMatch ? rawHashMatch[1].toLowerCase() : "";
