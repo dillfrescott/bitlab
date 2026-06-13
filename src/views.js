@@ -514,6 +514,22 @@ function layout({ title, body, extraHead = "" }) {
         width: 100%;
       }
     }
+    .captcha-wrapper {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease, margin 0.4s ease;
+      overflow: hidden;
+      opacity: 0;
+      margin: 0;
+    }
+    .captcha-wrapper.revealed {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      margin: 16px 0;
+    }
+    .captcha-inner {
+      min-height: 0;
+    }
   </style>
   ${extraHead}
 </head>
@@ -570,10 +586,15 @@ function renderMessage(message) {
   return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
 }
 
-function renderLogin(message, turnstileSiteKey = "") {
+function renderLogin(message, nullCaptchaUrl = "") {
+  let baseUrl = nullCaptchaUrl;
+  if (baseUrl && !baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    baseUrl = "https://" + baseUrl;
+  }
+
   return layout({
     title: "Login",
-    extraHead: turnstileSiteKey ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>` : "",
+    extraHead: baseUrl ? `<script src="${baseUrl}/js/null.js" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -590,8 +611,15 @@ function renderLogin(message, turnstileSiteKey = "") {
               <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
             </label>
             ${
-              turnstileSiteKey
-                ? `<div id="turnstile-container" style="display: none; margin: 16px 0; justify-content: center;"></div>`
+              baseUrl
+                ? `
+                <div class="captcha-wrapper">
+                  <div class="captcha-inner">
+                    <div id="null-captcha-widget" style="margin: 0 auto; display: flex; justify-content: center;"></div>
+                  </div>
+                </div>
+                <input type="hidden" name="null-captcha-token" id="null-captcha-token" />
+                `
                 : ""
             }
             <button type="submit">Sign In</button>
@@ -599,65 +627,47 @@ function renderLogin(message, turnstileSiteKey = "") {
         </section>
       </div>
       ${
-        turnstileSiteKey
+        baseUrl
           ? `
           <script>
             (() => {
               const form = document.querySelector('form[action="/admin/login"]');
               if (!form) return;
-              let turnstileWidgetId = null;
+
+              window.addEventListener('load', () => {
+                const initCaptcha = () => {
+                  if (window.NullCaptcha) {
+                    window.NullCaptcha.render('null-captcha-widget', {
+                      onSuccess: (token) => {
+                        const input = document.getElementById('null-captcha-token');
+                        if (input) {
+                          input.value = token;
+                        }
+                        form.submit();
+                      },
+                      onFailure: (error) => {
+                        console.error("CAPTCHA Verification Failed:", error);
+                      }
+                    });
+                  } else {
+                    setTimeout(initCaptcha, 100);
+                  }
+                };
+                initCaptcha();
+              });
+
               form.addEventListener('submit', (e) => {
-                const response = form.querySelector('[name="cf-turnstile-response"]');
-                if (response && response.value) {
-                  return;
-                }
-                
-                if (!window.turnstile) {
+                const wrapper = document.querySelector('.captcha-wrapper');
+                if (wrapper && !wrapper.classList.contains('revealed')) {
                   e.preventDefault();
-                  const button = form.querySelector('button[type="submit"]');
-                  if (button) {
-                    button.disabled = true;
-                    button.innerText = "Loading Verification...";
-                  }
-                  const checkInterval = setInterval(() => {
-                    if (window.turnstile) {
-                      clearInterval(checkInterval);
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.dispatchEvent(new Event('submit', { cancelable: true }));
-                    }
-                  }, 100);
-                  setTimeout(() => {
-                    clearInterval(checkInterval);
-                    if (!window.turnstile) {
-                      if (button) {
-                        button.disabled = false;
-                        button.innerText = "Sign In";
-                      }
-                      form.submit();
-                    }
-                  }, 4000);
+                  wrapper.classList.add('revealed');
                   return;
                 }
-                
-                e.preventDefault();
-                if (turnstileWidgetId === null) {
-                  const container = document.getElementById('turnstile-container');
-                  if (container) {
-                    container.style.display = 'flex';
-                  }
-                  turnstileWidgetId = window.turnstile.render('#turnstile-container', {
-                    sitekey: '${escapeHtml(turnstileSiteKey)}',
-                    theme: 'dark',
-                    callback: (token) => {
-                      form.submit();
-                    },
-                    'error-callback': () => {
-                      window.turnstile.reset(turnstileWidgetId);
-                    }
-                  });
+
+                const tokenInput = document.getElementById('null-captcha-token');
+                if (!tokenInput || !tokenInput.value) {
+                  e.preventDefault();
+                  alert("Please verify the CAPTCHA first.");
                 }
               });
             })();

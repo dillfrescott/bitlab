@@ -68,8 +68,7 @@ function getConfig() {
     ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
-    turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || "",
-    turnstileSecretKey: process.env.TURNSTILE_SECRET_KEY || "",
+    nullCaptchaUrl: process.env.NULL_CAPTCHA_URL || "",
     sessionSecret: (function() {
       if (process.env.SESSION_SECRET) {
         return process.env.SESSION_SECRET;
