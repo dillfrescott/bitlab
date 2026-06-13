@@ -1130,7 +1130,7 @@ function renderUserDetails({
 
           async function updateKeyDetails() {
             try {
-              const url = new URL(\`/admin/api/keys/\${userId}\`, window.location.origin);
+              const url = new URL(\`/admin/api/users/\${userId}\`, window.location.origin);
               const params = new URLSearchParams(window.location.search);
               if (params.has("historyLimit")) {
                 url.searchParams.set("historyLimit", params.get("historyLimit"));
@@ -1319,13 +1319,13 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
           <section class="stats">
             <article class="stat" style="grid-column: span 2;">
               <div class="eyebrow">Monthly Bandwidth Usage</div>
-              <div class="value">${escapeHtml(formattedUsed)} / ${escapeHtml(formattedLimit)}</div>
+              <div class="value" data-user-bandwidth-value>${escapeHtml(formattedUsed)} / ${escapeHtml(formattedLimit)}</div>
               <div class="progress-container">
-                <div class="progress-bar" style="width: ${percent}%; background-color: ${progressBarColor};"></div>
+                <div class="progress-bar" data-user-bandwidth-progress style="width: ${percent}%; background-color: ${progressBarColor};"></div>
               </div>
               <div class="small" style="display: flex; justify-content: space-between;">
-                <span>${percent}% of monthly limit used</span>
-                <span>Resets on: <strong>${escapeHtml(resetDateText)}</strong></span>
+                <span data-user-bandwidth-percent-text>${percent}% of monthly limit used</span>
+                <span data-user-bandwidth-reset-text>Resets on: <strong>${escapeHtml(resetDateText)}</strong></span>
               </div>
             </article>
             
@@ -1387,16 +1387,16 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
               <article class="panel key-card" data-key-id="${k.id}">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                   <div style="display: flex; align-items: center; gap: 12px;">
-                    <div style="width: 10px; height: 10px; border-radius: 50%; background: ${statusColor}; flex-shrink: 0; ${isActive ? 'box-shadow: 0 0 8px ' + statusColor + ';' : ''}"></div>
+                    <div data-key-indicator="${k.id}" style="width: 10px; height: 10px; border-radius: 50%; background: ${statusColor}; flex-shrink: 0; ${isActive ? 'box-shadow: 0 0 8px ' + statusColor + ';' : ''}"></div>
                     <div>
                       <div style="font-weight: 700; font-size: 16px;">${escapeHtml(k.name)}</div>
-                      <div class="small" style="color: ${statusColor};">${statusText}${isActive && k.activeStreamTitle ? ' — ' + escapeHtml(k.activeStreamTitle) : ''}</div>
+                      <div class="small" data-key-status-text="${k.id}" style="color: ${statusColor};">${statusText}${isActive && k.activeStreamTitle ? ' — ' + escapeHtml(k.activeStreamTitle) : ''}</div>
                     </div>
                   </div>
                   <div style="display: flex; align-items: center; gap: 12px;">
                     <div style="text-align: right;">
                       <div class="small" style="opacity: 0.5;">Bandwidth</div>
-                      <div style="font-weight: 600; font-size: 14px;">${keyBw}</div>
+                      <div data-key-bandwidth="${k.id}" style="font-weight: 600; font-size: 14px;">${keyBw}</div>
                     </div>
                     <button type="button" class="manage-toggle" onclick="toggleManage(${k.id})" style="width: auto; min-height: unset; padding: 8px 16px; font-size: 12px; font-weight: 600; background: var(--line-strong); border: 1px solid var(--line);">Manage ▾</button>
                   </div>
@@ -1445,7 +1445,7 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
                   </div>
 
                   <!-- Watch History -->
-                  <div>
+                  <div data-key-history-container="${k.id}">
                     <div class="eyebrow" style="margin-bottom: 8px;">Recent Watch History</div>
                     ${history.length === 0 ? `
                       <div class="small" style="opacity: 0.4; padding: 12px 0;">No watch history yet for this key.</div>
@@ -1459,7 +1459,7 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
                               <th style="padding: 8px 6px; color: var(--muted); font-size: 11px; text-transform: uppercase;">Watched</th>
                             </tr>
                           </thead>
-                          <tbody>
+                          <tbody data-key-history-body="${k.id}">
                             ${history.map(h => {
                               const episodeLabel = Number.isInteger(h.season) && Number.isInteger(h.episode)
                                 ? ' S' + String(h.season).padStart(2, '0') + 'E' + String(h.episode).padStart(2, '0')
@@ -1626,6 +1626,160 @@ function renderUserDashboard({ baseUrl, user, key, keys = [], sessions = [], cur
           if (tab && (tab === 'dashboard' || tab === 'security' || tab === 'sessions')) {
             switchTab(tab);
           }
+        })();
+
+        // Auto-update dashboard key status and history
+        (() => {
+          const timezone = "${escapeHtml(timezone || "UTC")}";
+
+          function escapeHtml(value) {
+            return String(value || "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#39;");
+          }
+
+          function formatBytes(bytes) {
+            if (bytes === 0) return "0 B";
+            const k = 1024;
+            const sizes = ["B", "KB", "MB", "GB", "TB"];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+          }
+
+          function formatTimestamp(value) {
+            if (!value) return "";
+            try {
+              const isoValue = String(value).replace(" ", "T");
+              const parsed = new Date(isoValue.endsWith("Z") ? isoValue : \`\${isoValue}Z\`);
+              return new Intl.DateTimeFormat("en-US", {
+                timeZone: timezone,
+                year: "numeric", month: "2-digit", day: "2-digit",
+                hour: "2-digit", minute: "2-digit", second: "2-digit",
+                hour12: false, timeZoneName: "short"
+              }).format(parsed);
+            } catch (e) { return String(value); }
+          }
+
+          async function updateDashboardData() {
+            try {
+              const res = await fetch("/user/api/dashboard");
+              if (!res.ok) return;
+              const data = await res.json();
+
+              // Update overall bandwidth stats
+              const bwValue = document.querySelector("[data-user-bandwidth-value]");
+              if (bwValue) {
+                bwValue.textContent = \`\${formatBytes(data.bandwidth_used)} / \${formatBytes(data.bandwidth_limit)}\`;
+              }
+              const bwProgress = document.querySelector("[data-user-bandwidth-progress]");
+              if (bwProgress) {
+                const percent = Math.min(100, Math.round((data.bandwidth_used / data.bandwidth_limit) * 100)) || 0;
+                bwProgress.style.width = \`\${percent}%\`;
+                let progressBarColor = "var(--live)";
+                if (percent > 85) {
+                  progressBarColor = "var(--danger)";
+                } else if (percent > 60) {
+                  progressBarColor = "#f59e0b";
+                }
+                bwProgress.style.backgroundColor = progressBarColor;
+                
+                const percentText = document.querySelector("[data-user-bandwidth-percent-text]");
+                if (percentText) {
+                  percentText.textContent = \`\${percent}% of monthly limit used\`;
+                }
+              }
+
+              const resetText = document.querySelector("[data-user-bandwidth-reset-text]");
+              if (resetText && data.bandwidth_reset_at) {
+                resetText.innerHTML = \`Resets on: <strong>\${formatTimestamp(data.bandwidth_reset_at)}</strong>\`;
+              }
+
+              // Update keys
+              if (data.keys) {
+                data.keys.forEach(k => {
+                  const isActive = k.activeStreamCount > 0;
+                  const isPaused = !!k.paused_at;
+                  const statusColor = isPaused ? 'var(--danger)' : (isActive ? 'var(--live)' : 'var(--muted)');
+                  const statusText = isPaused ? 'Frozen' : (isActive ? 'Streaming' : 'Idle');
+
+                  // 1. Indicator dot
+                  const dot = document.querySelector(\`[data-key-indicator="\${k.id}"]\`);
+                  if (dot) {
+                    dot.style.background = statusColor;
+                    if (isActive) {
+                      dot.style.boxShadow = \`0 0 8px \${statusColor}\`;
+                    } else {
+                      dot.style.boxShadow = "none";
+                    }
+                  }
+
+                  // 2. Status text
+                  const statusTextEl = document.querySelector(\`[data-key-status-text="\${k.id}"]\`);
+                  if (statusTextEl) {
+                    statusTextEl.style.color = statusColor;
+                    statusTextEl.textContent = \`\${statusText}\${isActive && k.activeStreamTitle ? ' — ' + k.activeStreamTitle : ''}\`;
+                  }
+
+                  // 3. Bandwidth used for key
+                  const bwKey = document.querySelector(\`[data-key-bandwidth="\${k.id}"]\`);
+                  if (bwKey) {
+                    bwKey.textContent = formatBytes(k.bandwidth_used || 0);
+                  }
+
+                  // 4. Watch history table
+                  const historyContainer = document.querySelector(\`[data-key-history-container="\${k.id}"]\`);
+                  if (historyContainer) {
+                    if (!k.watchHistory || k.watchHistory.length === 0) {
+                      historyContainer.innerHTML = \`
+                        <div class="eyebrow" style="margin-bottom: 8px;">Recent Watch History</div>
+                        <div class="small" style="opacity: 0.4; padding: 12px 0;">No watch history yet for this key.</div>
+                      \`;
+                    } else {
+                      const tableRows = k.watchHistory.map(h => {
+                        const episodeLabel = Number.isInteger(h.season) && Number.isInteger(h.episode)
+                          ? ' S' + String(h.season).padStart(2, '0') + 'E' + String(h.episode).padStart(2, '0')
+                          : '';
+                        return \`
+                          <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);">
+                            <td style="padding: 6px;">\${escapeHtml(h.media_title || 'Unknown')}\${episodeLabel}</td>
+                            <td style="padding: 6px; text-transform: capitalize;">\${escapeHtml(h.media_type || '-')}</td>
+                            <td style="padding: 6px; white-space: nowrap;">\${escapeHtml(formatTimestamp(h.watched_at))}</td>
+                          </tr>
+                        \`;
+                      }).join('');
+
+                      historyContainer.innerHTML = \`
+                        <div class="eyebrow" style="margin-bottom: 8px;">Recent Watch History</div>
+                        <div style="overflow-x: auto;">
+                          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px;">
+                            <thead>
+                              <tr style="border-bottom: 1px solid var(--line);">
+                                <th style="padding: 8px 6px; color: var(--muted); font-size: 11px; text-transform: uppercase;">Title</th>
+                                <th style="padding: 8px 6px; color: var(--muted); font-size: 11px; text-transform: uppercase;">Type</th>
+                                <th style="padding: 8px 6px; color: var(--muted); font-size: 11px; text-transform: uppercase;">Watched</th>
+                              </tr>
+                            </thead>
+                            <tbody data-key-history-body="\${k.id}">
+                              \${tableRows}
+                            </tbody>
+                          </table>
+                        </div>
+                      \`;
+                    }
+                  }
+                });
+              }
+            } catch (err) {
+              console.error("Failed to update dashboard data:", err);
+            }
+          }
+
+          // Initial run and schedule
+          updateDashboardData();
+          setInterval(updateDashboardData, 2000);
         })();
       </script>
     `,

@@ -773,6 +773,46 @@ app.post("/user/sessions/:id/revoke", requireUser, (req, res) => {
   res.redirect(`/?tab=sessions&msg=${encodeURIComponent("Session revoked successfully.")}`);
 });
 
+app.get("/user/api/dashboard", requireUser, (req, res) => {
+  const user = req.user;
+  const keys = db.getUserKeys(user.id);
+  const keysWithStatus = keys.map(k => {
+    const activeHashes = getActivePlaybackHashes(k.token);
+    let activeStreamTitle = null;
+    if (activeHashes.length > 0) {
+      // Find latest watch history entry for this key
+      const latestHistory = db.getWatchHistoryForKey(k.id, 5);
+      const activeEntry = latestHistory.find(h => activeHashes.includes(h.playback_token_hash));
+      if (activeEntry) {
+        const episodeLabel = Number.isInteger(activeEntry.season) && Number.isInteger(activeEntry.episode)
+          ? `S${String(activeEntry.season).padStart(2, "0")}E${String(activeEntry.episode).padStart(2, "0")}`
+          : "";
+        activeStreamTitle = activeEntry.media_title + (episodeLabel ? ` (${episodeLabel})` : "");
+      } else {
+        activeStreamTitle = "Active Stream";
+      }
+    }
+    const watchHistory = db.getWatchHistoryForKey(k.id, 10);
+    return {
+      id: k.id,
+      name: k.name,
+      token: k.token,
+      bandwidth_used: k.bandwidth_used,
+      paused_at: k.paused_at,
+      activeStreamCount: activeHashes.length,
+      activeStreamTitle,
+      watchHistory
+    };
+  });
+
+  res.json({
+    bandwidth_used: user.bandwidth_used,
+    bandwidth_limit: user.bandwidth_limit,
+    bandwidth_reset_at: user.bandwidth_reset_at,
+    keys: keysWithStatus
+  });
+});
+
 // --- ADMIN API ENDPOINTS ---
 app.get("/admin/api/users/:id", requireAdmin, async (req, res) => {
   const userId = Number(req.params.id);
