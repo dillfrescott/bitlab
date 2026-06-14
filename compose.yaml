@@ -1,6 +1,6 @@
 services:
   frontend:
-    image: xdillfrescott/bitlab:latest
+    build: .
     container_name: bitmagnet-stremio-frontend
     restart: unless-stopped
     ports:

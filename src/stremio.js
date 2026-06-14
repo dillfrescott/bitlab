@@ -8,6 +8,7 @@ const {
 const {
   orchestrateSearch,
 } = require("./discovery");
+const { getTrackers } = require("./trackers");
 
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const CINEMETA_BASE_URL = "https://v3-cinemeta.strem.io";
@@ -186,6 +187,14 @@ function sortReleases(releases) {
 }
 
 function hasDisplayableSeeders(release, options = {}) {
+  // Always show a release if it has a resolvable infoHash — even with 0 seeders.
+  // Local bitmagnet indexes often report 0 seeders for torrents that are still
+  // reachable via DHT or PEX, so suppressing them causes infinite loading.
+  const infoHash = release?.infoHash ||
+    String(release?.magnetUri || "").match(/btih:([a-fA-F0-9]+)/i)?.[1];
+  if (infoHash) {
+    return true;
+  }
   const seeders = (Number.isFinite(release?.seeders) ? release.seeders : 0);
   if (options.lenient) {
     return seeders >= 0;
@@ -324,11 +333,41 @@ function parseStreamRequestId(id, type) {
       episode: null,
     };
   }
+  // For movies, Stremio sends the defaultVideoId as the stream id.
+  // defaultVideoId is built as `${mediaId}:${releaseId}`, so we need to
+  // split on the LAST colon-separated segment that looks like a release UUID
+  // (not a tmdb: prefix or tt-style id). A release ID from bitmagnet is a
+  // non-numeric, non-imdb segment after the media identifier.
+  //
+  // Supported patterns:
+  //   bm<uuid>:<releaseId>          → split at first colon
+  //   tt<digits>:<releaseId>        → split at first colon
+  //   tmdb:<digits>:<releaseId>     → split at second colon (skip the tmdb: prefix)
+  //   <mediaId>                     → no release, use as-is
   if (raw.startsWith("bm") && raw.includes(":")) {
     const separatorIndex = raw.indexOf(":");
     return {
       mediaId: raw.slice(0, separatorIndex),
       releaseId: raw.slice(separatorIndex + 1),
+      season: null,
+      episode: null,
+    };
+  }
+  if (/^tt\d+:.+$/i.test(raw)) {
+    const separatorIndex = raw.indexOf(":");
+    return {
+      mediaId: raw.slice(0, separatorIndex),
+      releaseId: raw.slice(separatorIndex + 1),
+      season: null,
+      episode: null,
+    };
+  }
+  // tmdb:<digits>:<releaseId> — skip the tmdb: prefix, split on the next colon
+  const tmdbWithRelease = raw.match(/^(tmdb:\d+):(.+)$/i);
+  if (tmdbWithRelease) {
+    return {
+      mediaId: tmdbWithRelease[1],
+      releaseId: tmdbWithRelease[2],
       season: null,
       episode: null,
     };
@@ -846,6 +885,31 @@ function buildMagnetStream(release, media, options = {}) {
 
   const magnetUri = release.magnetUri || `magnet:?xt=urn:btih:${infoHash}`;
 
+  // Extract tracker URLs from the magnet URI and format them as Stremio sources.
+  // This tells Stremio exactly which trackers to use for peer discovery,
+  // making the client-side P2P intent unambiguous instead of relying on DHT alone.
+  let sourcesList = [];
+  try {
+    const trackers = Array.from(new URL(magnetUri).searchParams.getAll("tr"))
+      .map((tr) => `tracker:${tr}`)
+      .filter(Boolean);
+    if (trackers.length > 0) {
+      sourcesList.push(...trackers);
+    }
+  } catch (_err) {
+    // Ignore malformed magnet URIs — Stremio will still use DHT
+  }
+
+  // Inject public trackers to ensure Stremio's torrent engine can start download immediately
+  try {
+    const publicTrackers = getTrackers().map((tr) => `tracker:${tr}`);
+    sourcesList.push(...publicTrackers);
+  } catch (_err) {
+    // Fail-safe
+  }
+
+  const sources = [...new Set(sourcesList)];
+
   const title = formatStreamTitle(release, {
     mediaType: media.type,
     mediaTitle: media.title,
@@ -857,6 +921,7 @@ function buildMagnetStream(release, media, options = {}) {
     name: "[Bitlab]",
     title,
     infoHash,
+    ...(sources.length > 0 ? { sources } : {}),
     behaviorHints: {
       bingeGroup: `bitlab-${infoHash}`,
     },
@@ -921,8 +986,34 @@ function createAddonInterface({ config, bitmagnet }) {
           return releaseMatchesEpisodeRequest(release, season, episode);
         }
         return true;
-      })
-      .filter(hasDisplayableSeeders);
+      });
+
+    // When a specific release was requested by ID, skip the seeder filter —
+    // the user explicitly chose this torrent so we should always return it.
+    if (!releaseId) {
+      releases = releases.filter(hasDisplayableSeeders);
+    } else if (releases.length === 0) {
+      console.log(`[addon] stream releaseId miss type=${args.type} releaseId=${JSON.stringify(releaseId)} — falling back to all releases`);
+      releases = (Array.isArray(media.releases) ? media.releases : []).filter(hasDisplayableSeeders);
+    }
+
+    // For movies: if the primary filter produced nothing, try a lenient filter
+    // then a full refresh — mirrors the series fallback strategy.
+    if (args.type === "movie" && !releaseId && releases.length === 0) {
+      releases = (Array.isArray(media.releases) ? media.releases : [])
+        .filter((r) => hasDisplayableSeeders(r, { lenient: true }));
+      if (releases.length === 0) {
+        console.log(`[addon] movie stream no releases — refreshing media type=${args.type} title=${JSON.stringify(media.title)}`);
+        const refreshed = await refreshMedia(bitmagnet, mediaCache, pendingMediaLoads, media, args.type);
+        if (refreshed) {
+          media = refreshed;
+          releases = sortReleases(
+            (Array.isArray(media.releases) ? media.releases : [])
+              .filter((r) => hasDisplayableSeeders(r, { lenient: true })),
+          );
+        }
+      }
+    }
 
     if (args.type === "series") {
       if (Number.isInteger(season) && Number.isInteger(episode)) {
