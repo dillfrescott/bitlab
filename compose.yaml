@@ -10,8 +10,6 @@ services:
       - BASE_URL=${BASE_URL:-}
       - BITMAGNET_URL=${BITMAGNET_URL:-http://bitmagnet:3333}
       - METADATA_TIMEOUT_MS=${METADATA_TIMEOUT_MS:-90000}
-    volumes:
-      - ./data/frontend:/app/data
     depends_on:
       postgres:
         condition: service_healthy
