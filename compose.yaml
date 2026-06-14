@@ -8,6 +8,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     ports:
       - "7000:7000"
+      - "8090:8090"
     environment:
       - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-custom}
       - VPN_TYPE=${VPN_TYPE:-wireguard}
@@ -34,20 +35,14 @@ services:
       - NULL_CAPTCHA_URL=${NULL_CAPTCHA_URL:-}
       - BITMAGNET_URL=http://localhost:3333
       - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
-      - TORRENT_CACHE_RESERVE_GB=10
-      - TORRENT_IDLE_GRACE_MS=120000
-      - TORRENT_SWEEP_INTERVAL_MS=30000
+      - TORRSERVER_URL=http://localhost:8090
       - METADATA_TIMEOUT_MS=90000
-      - TORRENT_TRACKER_LIST_URL=https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt
-      - TORRENT_TRACKER_REFRESH_MS=21600000
-      - TORRENT_MAX_CONNS=500
       - POSTGRES_HOST=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=bitmagnet
       - POSTGRES_USER=postgres
     volumes:
       - ./data/frontend:/app/data
-      - ./cache:/tmp/webtorrent
       - /mnt/drive:/postgres_volume:ro
     depends_on:
       gluetun:
@@ -95,3 +90,17 @@ services:
         - pg_isready
       start_period: 20s
       interval: 10s
+
+  torrserver:
+    image: ghcr.io/yourok/torrserver:latest
+    container_name: torrserver
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    volumes:
+      - ./data/torrserver:/opt/ts
+    environment:
+      - TS_PORT=8090
+      - TS_DONTKILL=1
+    depends_on:
+      gluetun:
+        condition: service_healthy

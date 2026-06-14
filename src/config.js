@@ -2,16 +2,8 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 
 const dataDir = path.resolve(process.cwd(), "data");
-const torrentCacheDir = process.env.TORRENT_CACHE_DIR || "/tmp/webtorrent";
-const defaultTorrentCacheReserveGb = 20;
-const defaultTorrentIdleGraceMs = 1000 * 60 * 5;
-const defaultTorrentSweepIntervalMs = 60000;
 const defaultStreamTrackerSweepMs = 5000;
 const defaultStreamTrackerStaleMs = 1000 * 60;
-const defaultTorrentTrackerListUrl =
-  "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
-const defaultTorrentTrackerRefreshMs = 1000 * 60 * 60 * 6;
-const defaultTorrentMaxConns = 500;
 
 function parsePositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -31,33 +23,11 @@ function getTimezone() {
 function getConfig() {
   const bitmagnetUrl = process.env.BITMAGNET_URL || "http://bitmagnet:3333";
   const bitmagnetTorznabPath = process.env.BITMAGNET_TORZNAB_PATH || "/torznab/api";
-  const torrentCacheReserveGb = parsePositiveNumber(
-    process.env.TORRENT_CACHE_RESERVE_GB,
-    defaultTorrentCacheReserveGb,
-  );
+  const torrserverUrl = process.env.TORRSERVER_URL || "http://localhost:8090";
   return {
     port: Number(process.env.PORT || 7000),
     baseUrl: process.env.BASE_URL || "",
     dataDir,
-    torrentCacheDir,
-    torrentCacheReserveBytes: Math.floor(torrentCacheReserveGb * 1024 * 1024 * 1024),
-    torrentIdleGraceMs: Math.max(
-      30000,
-      Math.floor(parsePositiveNumber(process.env.TORRENT_IDLE_GRACE_MS, defaultTorrentIdleGraceMs)),
-    ),
-    torrentSweepIntervalMs: Math.max(
-      5000,
-      Math.floor(parsePositiveNumber(process.env.TORRENT_SWEEP_INTERVAL_MS, defaultTorrentSweepIntervalMs)),
-    ),
-    torrentTrackerListUrl: String(
-      process.env.TORRENT_TRACKER_LIST_URL ?? defaultTorrentTrackerListUrl,
-    ).trim(),
-    torrentTrackerRefreshMs: Math.max(
-      60000,
-      Math.floor(
-        parsePositiveNumber(process.env.TORRENT_TRACKER_REFRESH_MS, defaultTorrentTrackerRefreshMs),
-      ),
-    ),
     streamTrackerSweepMs: Math.max(
       1000,
       Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_SWEEP_MS, defaultStreamTrackerSweepMs)),
@@ -80,16 +50,12 @@ function getConfig() {
     streamTokenTtlMs: 1000 * 60 * 60 * 4,
     catalogPageSize: 50,
     metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 30),
-    torrentPort: Number(process.env.TORRENT_PORT || 16555),
-    torrentMaxConns: Math.max(
-      50,
-      Math.floor(parsePositiveNumber(process.env.TORRENT_MAX_CONNS, defaultTorrentMaxConns)),
-    ),
     timezone: getTimezone(),
     bitmagnetUrl,
     bitmagnetTorznabPath,
     bitmagnetApiKey: process.env.BITMAGNET_API_KEY || "",
     bitmagnetWebUiUrl: process.env.BITMAGNET_WEBUI_URL || bitmagnetUrl,
+    torrserverUrl,
     postgresHost: process.env.POSTGRES_HOST || "postgres",
     postgresPort: Number(process.env.POSTGRES_PORT || 5432),
     postgresDb: process.env.POSTGRES_DB || "bitmagnet",

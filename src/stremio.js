@@ -1125,7 +1125,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     id: "local.bitmagnet-stremio-lab",
     version: "0.4.3",
     name: "Bitlab",
-    description: "Searches a live bitmagnet index and streams selected magnets through WebTorrent.",
+    description: "Searches a live bitmagnet index and streams selected magnets through TorrServer.",
     resources: ["meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["bm", "tt", "tmdb", "imdb"],
