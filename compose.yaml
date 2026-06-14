@@ -1,23 +1,63 @@
 services:
+  gluetun:
+    image: qmcgaw/gluetun:v3
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "7000:7000"
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-custom}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:-}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES:-}
+      - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP:-}
+      - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT:-}
+      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY:-}
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-}
+      - SERVER_CITIES=${SERVER_CITIES:-}
+    restart: unless-stopped
+
   frontend:
-    image: xdillfrescott/bitlab
+    image: xdillfrescott/bitlab:latest
     container_name: bitmagnet-stremio-frontend
     restart: unless-stopped
-    ports:
-      - "${PORT:-7000}:${PORT:-7000}"
+    network_mode: "service:gluetun"
     environment:
-      - PORT=${PORT:-7000}
-      - BASE_URL=${BASE_URL:-}
-      - BITMAGNET_URL=${BITMAGNET_URL:-http://bitmagnet:3333}
-      - METADATA_TIMEOUT_MS=${METADATA_TIMEOUT_MS:-90000}
+      - PORT=7000
+      - TIMEZONE=America/New_York
+      - BASE_URL=https://bitlab.dill.moe
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - NULL_CAPTCHA_URL=${NULL_CAPTCHA_URL:-}
+      - BITMAGNET_URL=http://localhost:3333
+      - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
+      - TORRENT_CACHE_RESERVE_GB=10
+      - TORRENT_IDLE_GRACE_MS=120000
+      - TORRENT_SWEEP_INTERVAL_MS=30000
+      - METADATA_TIMEOUT_MS=90000
+      - TORRENT_TRACKER_LIST_URL=https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt
+      - TORRENT_TRACKER_REFRESH_MS=21600000
+      - TORRENT_MAX_CONNS=500
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=bitmagnet
+      - POSTGRES_USER=postgres
+    volumes:
+      - ./data/frontend:/app/data
+      - ./cache:/tmp/webtorrent
+      - /mnt/drive:/postgres_volume:ro
     depends_on:
-      postgres:
+      gluetun:
         condition: service_healthy
 
   bitmagnet:
     image: ghcr.io/bitmagnet-io/bitmagnet:latest
     container_name: bitmagnet
     restart: unless-stopped
+    network_mode: "service:gluetun"
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -33,19 +73,22 @@ services:
       - --keys=queue_server
       - --keys=dht_crawler
     depends_on:
+      gluetun:
+        condition: service_healthy
       postgres:
         condition: service_healthy
+
 
   postgres:
     image: postgres:18-alpine
     container_name: bitmagnet-postgres
     volumes:
-      - ${POSTGRES_DATA_PATH:-/mnt/drive/postgres}:/var/lib/postgresql
+      - /mnt/drive/postgres:/var/lib/postgresql
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-bitmagnet}
-      - PGUSER=${PGUSER:-postgres}
+      - POSTGRES_DB=bitmagnet
+      - PGUSER=postgres
     shm_size: 1g
     healthcheck:
       test:

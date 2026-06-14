@@ -1,22 +1,24 @@
 {
   "name": "bitlab",
-  "version": "0.5.0",
-  "description": "Stremio addon that searches a bitmagnet index and returns magnet streams",
+  "version": "1.0.0",
+  "description": "WebTorrent playback service backed by bitmagnet live search",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "check": "node --check src/index.js"
   },
   "keywords": [
-    "stremio",
-    "bitmagnet",
-    "magnet"
+    "webtorrent",
+    "sqlite"
   ],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
-    "stremio-addon-sdk": "^1.6.10"
+    "pg": "^8.21.0",
+    "stremio-addon-sdk": "^1.6.10",
+    "webtorrent": "^2.8.5"
   }
 }

@@ -1,17 +1,27 @@
 const { addonBuilder } = require("stremio-addon-sdk");
+const { createPlaybackToken } = require("./auth");
 const {
+  isVideoFile,
   normalizeKey,
   buildTitleSearchAliases,
   inferReleaseQuality,
   buildSeriesReleaseLabel,
 } = require("./classify");
 const {
+  parseEpisodeLocal,
   orchestrateSearch,
 } = require("./discovery");
-const { getTrackers } = require("./trackers");
 
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const CINEMETA_BASE_URL = "https://v3-cinemeta.strem.io";
+
+function validateAddonKey(db, token) {
+  const key = db.getKeyByToken(token);
+  if (!key || key.revoked_at) {
+    return null;
+  }
+  return key;
+}
 
 function pruneCache(cache) {
   const now = Date.now();
@@ -187,14 +197,6 @@ function sortReleases(releases) {
 }
 
 function hasDisplayableSeeders(release, options = {}) {
-  // Always show a release if it has a resolvable infoHash — even with 0 seeders.
-  // Local bitmagnet indexes often report 0 seeders for torrents that are still
-  // reachable via DHT or PEX, so suppressing them causes infinite loading.
-  const infoHash = release?.infoHash ||
-    String(release?.magnetUri || "").match(/btih:([a-fA-F0-9]+)/i)?.[1];
-  if (infoHash) {
-    return true;
-  }
   const seeders = (Number.isFinite(release?.seeders) ? release.seeders : 0);
   if (options.lenient) {
     return seeders >= 0;
@@ -333,41 +335,11 @@ function parseStreamRequestId(id, type) {
       episode: null,
     };
   }
-  // For movies, Stremio sends the defaultVideoId as the stream id.
-  // defaultVideoId is built as `${mediaId}:${releaseId}`, so we need to
-  // split on the LAST colon-separated segment that looks like a release UUID
-  // (not a tmdb: prefix or tt-style id). A release ID from bitmagnet is a
-  // non-numeric, non-imdb segment after the media identifier.
-  //
-  // Supported patterns:
-  //   bm<uuid>:<releaseId>          → split at first colon
-  //   tt<digits>:<releaseId>        → split at first colon
-  //   tmdb:<digits>:<releaseId>     → split at second colon (skip the tmdb: prefix)
-  //   <mediaId>                     → no release, use as-is
   if (raw.startsWith("bm") && raw.includes(":")) {
     const separatorIndex = raw.indexOf(":");
     return {
       mediaId: raw.slice(0, separatorIndex),
       releaseId: raw.slice(separatorIndex + 1),
-      season: null,
-      episode: null,
-    };
-  }
-  if (/^tt\d+:.+$/i.test(raw)) {
-    const separatorIndex = raw.indexOf(":");
-    return {
-      mediaId: raw.slice(0, separatorIndex),
-      releaseId: raw.slice(separatorIndex + 1),
-      season: null,
-      episode: null,
-    };
-  }
-  // tmdb:<digits>:<releaseId> — skip the tmdb: prefix, split on the next colon
-  const tmdbWithRelease = raw.match(/^(tmdb:\d+):(.+)$/i);
-  if (tmdbWithRelease) {
-    return {
-      mediaId: tmdbWithRelease[1],
-      releaseId: tmdbWithRelease[2],
       season: null,
       episode: null,
     };
@@ -446,6 +418,8 @@ async function fetchCinemetaFallback(type, id) {
     return null;
   }
 }
+
+const SERIES_PACK_INSPECT_TIMEOUT_MS = 20000;
 
 function dedupeMediaGroups(items) {
   const values = Array.isArray(items) ? items.filter(Boolean) : [];
@@ -708,6 +682,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
     return null;
   }
 
+  const mediaTitleKey = normalizeKey(media.title);
   const queries = buildEpisodeSearchQueries(media.title, season, episode);
   if (media.imdbId) {
     queries.push(`tt${String(media.imdbId).replace(/^tt/i, "")}`);
@@ -770,7 +745,207 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
   return foundExactMatch ? mergedMedia : (mergedMedia || null);
 }
 
+async function mergeSeriesReleases(existingReleases, inspected, fallbackRelease) {
+  const expanded = [];
 
+  for (const release of existingReleases) {
+    if (Number.isInteger(release.season) && Number.isInteger(release.episode)) {
+      expanded.push(release);
+    }
+  }
+
+  const videoFiles = (inspected.files || []).filter((file) => isVideoFile(file.name));
+  if (videoFiles.length === 0) {
+    return dedupeReleases(expanded);
+  }
+
+  for (let index = 0; index < videoFiles.length; index += 1) {
+    const file = videoFiles[index];
+    const episodeParts = parseEpisodeLocal(`${inspected.torrentName || fallbackRelease.releaseName} ${file.name}`);
+    if (!Number.isInteger(episodeParts?.season)) {
+      continue;
+    }
+    expanded.push({
+      ...fallbackRelease,
+      releaseName: inspected.torrentName || fallbackRelease.releaseName,
+      infoHash: inspected.infoHash || fallbackRelease.infoHash,
+      fileIndex: file.index,
+      fileName: file.name,
+      sizeBytes: file.sizeBytes,
+      season: episodeParts.season,
+      episode: Number.isInteger(episodeParts.episode) ? episodeParts.episode : null,
+    });
+  }
+
+  return dedupeReleases(expanded);
+}
+
+function hasEpisodeMatch(media, season, episode) {
+  return media.releases.some(
+    (release) => release.season === season && release.episode === episode,
+  );
+}
+
+function countEpisodicReleases(releases) {
+  return releases.filter(
+    (release) => Number.isInteger(release.season) && Number.isInteger(release.episode),
+  ).length;
+}
+
+function getPendingSeriesPackCount(media) {
+  return media.releases.filter(
+    (release) =>
+      Number.isInteger(release.season) &&
+      !Number.isInteger(release.episode) &&
+      (release.magnetUri || release.infoHash),
+  ).length;
+}
+
+function selectPendingSeriesPacks(media, options = {}) {
+  const targetSeason = Number.isInteger(options.season) ? options.season : null;
+  const targetEpisode = Number.isInteger(options.episode) ? options.episode : null;
+  const targetedRequest = targetSeason !== null && targetEpisode !== null;
+
+  let pending = media.releases.filter(
+    (release) =>
+      Number.isInteger(release.season) &&
+      !Number.isInteger(release.episode) &&
+      (release.magnetUri || release.infoHash),
+  );
+
+  if (targetedRequest) {
+    pending = pending.filter((release) => release.season === targetSeason);
+  }
+
+  pending.sort((left, right) => {
+    const leftSeasonScore = targetedRequest && left.season === targetSeason ? 1 : 0;
+    const rightSeasonScore = targetedRequest && right.season === targetSeason ? 1 : 0;
+    return rightSeasonScore - leftSeasonScore ||
+      getReleaseResolutionRank(right) - getReleaseResolutionRank(left) ||
+      ((Number.isFinite(right.seeders) ? right.seeders : 0) - (Number.isFinite(left.seeders) ? left.seeders : 0)) ||
+      ((Number.isFinite(right.sizeBytes) ? right.sizeBytes : 0) - (Number.isFinite(left.sizeBytes) ? left.sizeBytes : 0));
+  });
+
+  const selected = targetedRequest ? pending.slice(0, 3) : pending.slice(0, 10);
+  return selected.map(release => ({
+    ...release,
+    magnetUri: release.magnetUri || `magnet:?xt=urn:btih:${release.infoHash}`,
+  }));
+}
+
+async function expandSeriesMedia(media, torrentService, options = {}) {
+  if (!torrentService || media.type !== "series") {
+    return media;
+  }
+
+  const targetSeason = Number.isInteger(options.season) ? options.season : null;
+  const targetEpisode = Number.isInteger(options.episode) ? options.episode : null;
+  const targetedRequest = targetSeason !== null && targetEpisode !== null;
+
+  const needsExpansion = media.releases.some(
+    (release) => Number.isInteger(release.season) && !Number.isInteger(release.episode),
+  );
+  if (!needsExpansion) {
+    return media;
+  }
+
+  const pending = selectPendingSeriesPacks(media, options);
+  if (pending.length === 0) {
+    return media;
+  }
+
+  const timeoutMs = targetedRequest ? 15000 : SERIES_PACK_INSPECT_TIMEOUT_MS;
+  let releases = media.releases.slice();
+
+  // Create an array of expansion tasks
+  const tasks = pending.map(async (release) => {
+    try {
+      const inspected = await torrentService.inspectMagnet(release.magnetUri, {
+        removeAfterInspect: true,
+        timeoutMs,
+      });
+      const expanded = await mergeSeriesReleases(releases, inspected, release);
+      return { release, inspected, expanded };
+    } catch (error) {
+      console.error(
+        `[addon] series pack expansion failed title=${JSON.stringify(media.title)} infoHash=${JSON.stringify(release.infoHash || "")} error=${JSON.stringify(error.message)}`,
+      );
+      return null;
+    }
+  });
+
+  if (targetedRequest) {
+    // For targeted requests, we want to return as soon as we have A match,
+    // but we still want to benefit from other parallel results if they finish fast.
+    const results = [];
+    const internalReleases = new Set(releases.map(getReleaseIdentityKey));
+    let foundTarget = false;
+
+    await new Promise((resolve) => {
+      let finishedCount = 0;
+      let targetMatches = 0;
+
+      tasks.forEach(async (task) => {
+        const result = await task;
+        finishedCount += 1;
+
+        if (result) {
+          results.push(result);
+          // Count how many packs specifically have our target
+          const hasTarget = result.expanded.some(
+            (r) => r.season === targetSeason && r.episode === targetEpisode
+          );
+          if (hasTarget) {
+            targetMatches += 1;
+            foundTarget = true;
+          }
+        }
+
+        if (targetMatches >= 2 || finishedCount === tasks.length) {
+          resolve();
+        }
+      });
+    });
+
+    // Merge all results we got before resolving
+    for (const result of results) {
+      for (const r of result.expanded) {
+        const key = getReleaseIdentityKey(r);
+        if (!internalReleases.has(key)) {
+          internalReleases.add(key);
+          releases.push(r);
+        }
+      }
+    }
+
+    if (foundTarget) {
+      console.log(
+        `[addon] parallel expansion found target title=${JSON.stringify(media.title)} target=S${targetSeason}E${targetEpisode}`,
+      );
+    }
+  } else {
+    // For non-targeted requests (warming), wait for all to finish in parallel
+    const expansionResults = await Promise.allSettled(tasks);
+    for (const result of expansionResults) {
+      if (result.status === "fulfilled" && result.value) {
+        const { expanded } = result.value;
+        const currentKeys = new Set(releases.map(getReleaseIdentityKey));
+        for (const r of expanded) {
+          const key = getReleaseIdentityKey(r);
+          if (!currentKeys.has(key)) {
+            currentKeys.add(key);
+            releases.push(r);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    ...media,
+    releases: dedupeReleases(releases),
+  };
+}
 
 async function loadMedia(bitmagnet, cache, pendingCache, id, type, options = {}) {
   const cached = getCachedMedia(cache, id);
@@ -850,6 +1025,80 @@ async function loadMedia(bitmagnet, cache, pendingCache, id, type, options = {})
   return pending;
 }
 
+function createSeriesExpansionManager(cache, torrentService) {
+  const pendingExpansions = new Map();
+
+  async function ensureExpanded(media, options = {}) {
+    if (!media || media.type !== "series") {
+      return media;
+    }
+
+    const needsExpansion = media.releases.some(
+      (release) => Number.isInteger(release.season) && !Number.isInteger(release.episode),
+    );
+    if (!needsExpansion) {
+      return media;
+    }
+
+    const targetSeason = Number.isInteger(options.season) ? options.season : null;
+    const targetEpisode = Number.isInteger(options.episode) ? options.episode : null;
+    if (
+      targetSeason !== null &&
+      targetEpisode !== null &&
+      hasEpisodeMatch(media, targetSeason, targetEpisode)
+    ) {
+      return media;
+    }
+
+    const expansionKey =
+      targetSeason !== null && targetEpisode !== null
+        ? `${media.id}:${targetSeason}:${targetEpisode}`
+        : `${media.id}:all`;
+
+    if (pendingExpansions.has(expansionKey)) {
+      return pendingExpansions.get(expansionKey);
+    }
+
+    const pending = expandSeriesMedia(media, torrentService, {
+      season: targetSeason,
+      episode: targetEpisode,
+    }).then((expanded) => {
+      cacheMediaAliases(cache, expanded);
+      return expanded;
+    }).finally(() => {
+      if (pendingExpansions.get(expansionKey) === pending) {
+        pendingExpansions.delete(expansionKey);
+      }
+    });
+
+    pendingExpansions.set(expansionKey, pending);
+    return pending;
+  }
+
+  function warm(media) {
+    if (!media || media.type !== "series") {
+      return;
+    }
+    const pendingPackCount = getPendingSeriesPackCount(media);
+    if (pendingPackCount > 3) {
+      console.log(
+        `[addon] skipping background series expansion title=${JSON.stringify(media.title)} pendingPacks=${pendingPackCount}`,
+      );
+      return;
+    }
+    ensureExpanded(media).catch((error) => {
+      console.error(
+        `[addon] background series expansion failed title=${JSON.stringify(media.title)} error=${JSON.stringify(error.message)}`,
+      );
+    });
+  }
+
+  return {
+    ensureExpanded,
+    warm,
+  };
+}
+
 async function refreshMedia(bitmagnet, cache, pendingCache, media, type, options = {}) {
   invalidateCachedMedia(cache, media);
   const refreshId =
@@ -867,83 +1116,16 @@ async function refreshMedia(bitmagnet, cache, pendingCache, media, type, options
   return loadMedia(bitmagnet, cache, pendingCache, String(refreshId), type, options);
 }
 
-/**
- * Build a Torrentio-style magnet stream object for Stremio.
- * Stremio's own torrent engine handles the download.
- */
-function buildMagnetStream(release, media, options = {}) {
-  const { season, episode } = options;
-
-  // Build the magnet URI
-  const infoHash = release.infoHash
-    ? release.infoHash.toLowerCase()
-    : String(release.magnetUri || "").match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
-
-  if (!infoHash) {
-    return null;
-  }
-
-  const magnetUri = release.magnetUri || `magnet:?xt=urn:btih:${infoHash}`;
-
-  // Extract tracker URLs from the magnet URI and format them as Stremio sources.
-  // This tells Stremio exactly which trackers to use for peer discovery,
-  // making the client-side P2P intent unambiguous instead of relying on DHT alone.
-  let sourcesList = [];
-  try {
-    const trackers = Array.from(new URL(magnetUri).searchParams.getAll("tr"))
-      .map((tr) => `tracker:${tr}`)
-      .filter(Boolean);
-    if (trackers.length > 0) {
-      sourcesList.push(...trackers);
-    }
-  } catch (_err) {
-    // Ignore malformed magnet URIs — Stremio will still use DHT
-  }
-
-  // Inject public trackers to ensure Stremio's torrent engine can start download immediately
-  try {
-    const publicTrackers = getTrackers().map((tr) => `tracker:${tr}`);
-    sourcesList.push(...publicTrackers);
-  } catch (_err) {
-    // Fail-safe
-  }
-
-  const sources = [...new Set(sourcesList)];
-
-  const title = formatStreamTitle(release, {
-    mediaType: media.type,
-    mediaTitle: media.title,
-    season,
-    episode,
-  });
-
-  const stream = {
-    name: "[Bitlab]",
-    title,
-    infoHash,
-    ...(sources.length > 0 ? { sources } : {}),
-    behaviorHints: {
-      bingeGroup: `bitlab-${infoHash}`,
-    },
-  };
-
-  // If we have a specific file index, tell Stremio which file to play
-  if (Number.isInteger(release.fileIndex)) {
-    stream.fileIdx = release.fileIndex;
-  }
-
-  return stream;
-}
-
-function createAddonInterface({ config, bitmagnet }) {
+function createAddonInterface({ db, config, bitmagnet, torrentService }) {
   const mediaCache = new Map();
   const pendingMediaLoads = new Map();
+  const seriesExpansions = createSeriesExpansionManager(mediaCache, torrentService);
 
   const builder = new addonBuilder({
     id: "local.bitmagnet-stremio-lab",
-    version: "0.5.0",
+    version: "0.4.3",
     name: "Bitlab",
-    description: "Searches a live bitmagnet index and streams via magnet links through Stremio.",
+    description: "Searches a live bitmagnet index and streams selected magnets through WebTorrent.",
     resources: ["meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["bm", "tt", "tmdb", "imdb"],
@@ -955,20 +1137,27 @@ function createAddonInterface({ config, bitmagnet }) {
   });
 
   builder.defineMetaHandler(async (args) => {
-    const media = await loadMedia(bitmagnet, mediaCache, pendingMediaLoads, String(args.id), args.type);
+    const media = await loadMedia(bitmagnet, mediaCache, pendingMediaLoads, String(args.id), args.type, {
+      keyToken: args.config.keyToken,
+    });
     if (!media) {
       return { meta: null };
     }
+    const externalIds = parseExternalIds(args.id);
+    seriesExpansions.warm(media);
     return { meta: toMeta(media) };
   });
 
   builder.defineStreamHandler(async (args) => {
     const { mediaId, releaseId, season, episode } = parseStreamRequestId(args.id, args.type);
+    const mediaExternalIds = parseExternalIds(mediaId || args.id);
     console.log(
       `[addon] stream start type=${args.type} id=${JSON.stringify(args.id)} mediaId=${JSON.stringify(mediaId)} season=${JSON.stringify(season)} episode=${JSON.stringify(episode)}`,
     );
 
-    let media = await loadMedia(bitmagnet, mediaCache, pendingMediaLoads, mediaId, args.type);
+    let media = await loadMedia(bitmagnet, mediaCache, pendingMediaLoads, mediaId, args.type, {
+      keyToken: args.config.keyToken,
+    });
     if (!media) {
       console.log(`[addon] stream media miss type=${args.type} id=${JSON.stringify(args.id)}`);
       return { streams: [] };
@@ -976,6 +1165,7 @@ function createAddonInterface({ config, bitmagnet }) {
     console.log(
       `[addon] stream media loaded type=${args.type} title=${JSON.stringify(media.title)} releases=${media.releases.length}`,
     );
+    let attemptedExpansion = false;
 
     let releases = (Array.isArray(media.releases) ? media.releases : [])
       .filter((release) => {
@@ -986,34 +1176,8 @@ function createAddonInterface({ config, bitmagnet }) {
           return releaseMatchesEpisodeRequest(release, season, episode);
         }
         return true;
-      });
-
-    // When a specific release was requested by ID, skip the seeder filter —
-    // the user explicitly chose this torrent so we should always return it.
-    if (!releaseId) {
-      releases = releases.filter(hasDisplayableSeeders);
-    } else if (releases.length === 0) {
-      console.log(`[addon] stream releaseId miss type=${args.type} releaseId=${JSON.stringify(releaseId)} — falling back to all releases`);
-      releases = (Array.isArray(media.releases) ? media.releases : []).filter(hasDisplayableSeeders);
-    }
-
-    // For movies: if the primary filter produced nothing, try a lenient filter
-    // then a full refresh — mirrors the series fallback strategy.
-    if (args.type === "movie" && !releaseId && releases.length === 0) {
-      releases = (Array.isArray(media.releases) ? media.releases : [])
-        .filter((r) => hasDisplayableSeeders(r, { lenient: true }));
-      if (releases.length === 0) {
-        console.log(`[addon] movie stream no releases — refreshing media type=${args.type} title=${JSON.stringify(media.title)}`);
-        const refreshed = await refreshMedia(bitmagnet, mediaCache, pendingMediaLoads, media, args.type);
-        if (refreshed) {
-          media = refreshed;
-          releases = sortReleases(
-            (Array.isArray(media.releases) ? media.releases : [])
-              .filter((r) => hasDisplayableSeeders(r, { lenient: true })),
-          );
-        }
-      }
-    }
+      })
+      .filter(hasDisplayableSeeders);
 
     if (args.type === "series") {
       if (Number.isInteger(season) && Number.isInteger(episode)) {
@@ -1021,7 +1185,9 @@ function createAddonInterface({ config, bitmagnet }) {
           console.log(
             `[addon] stream no direct series matches title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} trying search fallback`,
           );
-          const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode);
+          const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
+            keyToken: args.config.keyToken,
+          });
           if (fallbackMedia) {
             media = fallbackMedia;
             cacheMediaAliases(mediaCache, media);
@@ -1029,6 +1195,17 @@ function createAddonInterface({ config, bitmagnet }) {
               .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
               .filter(hasDisplayableSeeders);
           }
+        }
+
+        if (releases.length === 0) {
+          attemptedExpansion = true;
+          console.log(
+            `[addon] stream attempting series expansion title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`,
+          );
+          media = await seriesExpansions.ensureExpanded(media, { season, episode });
+          releases = media.releases
+            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+            .filter(hasDisplayableSeeders);
         }
 
         if (releases.length === 0) {
@@ -1040,34 +1217,68 @@ function createAddonInterface({ config, bitmagnet }) {
           }
         }
 
-        if (releases.length === 0) {
-          const refreshed = await refreshMedia(bitmagnet, mediaCache, pendingMediaLoads, media, args.type);
-          if (refreshed) {
-            media = refreshed;
-            releases = sortReleases(
+        if (releases.length <= 1 && getPendingSeriesPackCount(media) > 0 && !attemptedExpansion) {
+          attemptedExpansion = true;
+          const expandedMedia = await seriesExpansions.ensureExpanded(media, { season, episode });
+          if (expandedMedia) {
+            media = expandedMedia;
+            releases = mergeReleaseLists(
+              releases,
               media.releases
                 .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
                 .filter(hasDisplayableSeeders),
-            );
+            ).filter(hasDisplayableSeeders);
           }
         }
-
-        if (releases.length === 0) {
-          const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode);
-          if (fallbackMedia) {
-            media = fallbackMedia;
-            cacheMediaAliases(mediaCache, media);
-            releases = sortReleases(
-              media.releases
-                .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
-                .filter(hasDisplayableSeeders),
-            );
-          }
-        }
+      } else {
+        seriesExpansions.warm(media);
       }
     }
 
     releases = sortReleases(releases);
+
+    if (
+      args.type === "series" &&
+      Number.isInteger(season) &&
+      Number.isInteger(episode) &&
+      releases.length <= 1 &&
+      !attemptedExpansion
+    ) {
+      const refreshed = await refreshMedia(bitmagnet, mediaCache, pendingMediaLoads, media, args.type, {
+        keyToken: args.config.keyToken,
+      });
+      if (refreshed) {
+        media = await seriesExpansions.ensureExpanded(refreshed, { season, episode });
+        releases = sortReleases(
+          mergeReleaseLists(
+            releases,
+            media.releases
+              .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+              .filter(hasDisplayableSeeders),
+          ),
+        );
+      }
+    }
+
+    if (
+      args.type === "series" &&
+      Number.isInteger(season) &&
+      Number.isInteger(episode) &&
+      releases.length === 0
+    ) {
+      const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
+        keyToken: args.config.keyToken,
+      });
+      if (fallbackMedia) {
+        media = fallbackMedia;
+        cacheMediaAliases(mediaCache, media);
+        releases = sortReleases(
+          media.releases
+            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+            .filter(hasDisplayableSeeders),
+        );
+      }
+    }
 
     if (args.type === "series" && Number.isInteger(season) && Number.isInteger(episode)) {
       console.log(
@@ -1075,11 +1286,44 @@ function createAddonInterface({ config, bitmagnet }) {
       );
     }
 
-    const streams = releases
-      .map((release) => buildMagnetStream(release, media, { season, episode }))
-      .filter(Boolean);
+    const streams = releases.flatMap((release) => {
+      const token = createPlaybackToken({
+        keyToken: args.config.keyToken,
+        stream: {
+          mediaType: media.type,
+          mediaTitle: media.title,
+          releaseName: release.releaseName,
+          season: Number.isInteger(season)
+            ? season
+            : (Number.isInteger(release.season) ? release.season : undefined),
+          episode: Number.isInteger(episode)
+            ? episode
+            : (Number.isInteger(release.episode) ? release.episode : undefined),
+          fileName: release.fileName || undefined,
+          infoHash: release.infoHash || undefined,
+          magnetUri: release.magnetUri,
+          fileIndex: Number.isInteger(release.fileIndex) ? release.fileIndex : undefined,
+          sizeBytes: Number.isFinite(release.sizeBytes) ? release.sizeBytes : undefined,
+        },
+        secret: config.sessionSecret,
+        ttlMs: config.streamTokenTtlMs,
+      });
 
-    console.log(`[addon] stream result count=${streams.length}`);
+      return [{
+        name: "[Bitlab]",
+        title: formatStreamTitle(release, {
+          mediaType: media.type,
+          mediaTitle: media.title,
+          season,
+          episode,
+        }),
+        url: `${args.config.baseUrl}/play/${token}`,
+        behaviorHints: {
+          notWebReady: true,
+        },
+      }];
+    });
+
     return { streams };
   });
 
@@ -1088,4 +1332,5 @@ function createAddonInterface({ config, bitmagnet }) {
 
 module.exports = {
   createAddonInterface,
+  validateAddonKey,
 };
