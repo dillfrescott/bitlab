@@ -27,7 +27,7 @@ function createTimestampFormatter(timezone) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hour12: true,
     timeZoneName: "short",
   });
 
@@ -44,32 +44,32 @@ function layout({ title, body, extraHead = "" }) {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <title>${escapeHtml(title)}</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #09090b;
-      --panel: rgba(20, 20, 25, 0.7);
-      --line: rgba(255, 255, 255, 0.08);
-      --line-strong: rgba(255, 255, 255, 0.16);
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --accent: #3b82f6;
-      --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-      --accent-glow: rgba(59, 130, 246, 0.15);
-      --accent-2: #60a5fa;
-      --danger: #ef4444;
-      --danger-gradient: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+      --bg: #000000;
+      --panel: #000000;
+      --line: #222222;
+      --line-strong: #333333;
+      --text: #ffffff;
+      --muted: #8e8e93;
+      --accent: #ffffff;
+      --accent-gradient: #ffffff;
+      --accent-glow: transparent;
+      --accent-2: #ffffff;
+      --danger: #ff453a;
+      --danger-gradient: #ff453a;
       --danger-ink: #ffffff;
-      --success-bg: rgba(16, 185, 129, 0.08);
-      --success-line: rgba(16, 185, 129, 0.25);
-      --live: #10b981;
-      --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-      --radius: 12px;
-      --radius-sm: 8px;
+      --success-bg: #000000;
+      --success-line: #00ff66;
+      --live: #00ff66;
+      --shadow: none;
+      --radius: 0px;
+      --radius-sm: 0px;
     }
     * { 
       box-sizing: border-box; 
@@ -77,144 +77,130 @@ function layout({ title, body, extraHead = "" }) {
       scrollbar-color: var(--line-strong) transparent;
     }
     *::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+      width: 4px;
+      height: 4px;
     }
     *::-webkit-scrollbar-track {
       background: transparent;
     }
     *::-webkit-scrollbar-thumb {
       background: var(--line-strong);
-      border-radius: 3px;
+      border-radius: 0px;
     }
     *::-webkit-scrollbar-thumb:hover {
       background: var(--muted);
     }
-    @keyframes pulse {
-      0% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
-      70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-      100% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    @keyframes blink {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
     }
     .live-indicator {
       display: inline-block;
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       background: var(--live);
       border-radius: 50%;
       margin-right: 8px;
       vertical-align: middle;
-      animation: pulse 2s infinite;
+      animation: blink 1.5s infinite ease-in-out;
     }
     .reveal-toggle {
       width: auto;
       display: inline-block;
       padding: 6px 12px;
-      font-size: 11px;
-      background: var(--line-strong);
-      color: var(--text);
+      font-size: 10px;
+      background: transparent;
+      color: var(--muted);
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
       cursor: pointer;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
       box-shadow: none;
     }
     .reveal-toggle:hover {
-      background: var(--line-strong);
-      border-color: var(--accent-2);
+      background: var(--text);
+      color: var(--bg);
+      border-color: var(--text);
     }
     .reveal-secret[hidden] {
       display: none;
     }
     body {
       margin: 0;
-      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: var(--text);
-      background: var(--bg) url("/static/background.svg") no-repeat fixed center;
-      background-size: cover;
+      background: var(--bg);
       min-height: 100vh;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    a { color: var(--accent-2); text-decoration: none; transition: color 0.2s ease; }
-    a:hover { text-decoration: underline; color: var(--text); }
+    a { color: var(--text); text-decoration: none; transition: opacity 0.15s ease; border-bottom: 1px solid var(--line); }
+    a:hover { opacity: 0.8; text-decoration: none; border-bottom-color: var(--text); }
     code {
-      background: rgba(10, 10, 12, 0.8);
+      background: #0f0f0f;
       border: 1px solid var(--line);
-      border-radius: 4px;
+      border-radius: 0px;
       padding: 2px 6px;
       word-break: break-all;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 0.9em;
     }
     .shell, .login-shell {
       width: min(1120px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 32px 0 60px;
+      padding: 40px 0 80px;
     }
-    .login-shell { max-width: 420px; margin-top: 100px; }
+    .login-shell { max-width: 400px; margin-top: 120px; }
     .hero {
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      align-items: flex-start;
-      margin-bottom: 32px;
-      padding: 20px 0;
+      align-items: flex-end;
+      margin-bottom: 40px;
+      padding-bottom: 24px;
       border-bottom: 1px solid var(--line);
     }
     .hero h1 {
       margin: 0 0 8px;
-      font-size: clamp(32px, 5vw, 48px);
+      font-size: 32px;
       line-height: 1.1;
-      letter-spacing: -0.04em;
-      font-weight: 800;
-      background: linear-gradient(135deg, #ffffff 40%, var(--muted) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.03em;
+      font-weight: 700;
+      color: var(--text);
     }
     .hero p, .small {
       margin: 0;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
     }
     .stack, .list {
       display: grid;
-      gap: 20px;
+      gap: 24px;
     }
     .list { gap: 16px; }
     .stats {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 16px;
-      margin-bottom: 8px;
+      margin-bottom: 24px;
     }
     .stat, .panel, .card {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: none;
+      transition: border-color 0.15s ease;
     }
     .stat {
       position: relative;
       overflow: hidden;
     }
-    .stat::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background: var(--accent-gradient);
-    }
     .stat:hover, .card:hover {
-      transform: translateY(-2px);
       border-color: var(--line-strong);
-      box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
     }
     .stat, .panel { padding: 24px; }
     .card { padding: 20px; }
@@ -223,33 +209,34 @@ function layout({ title, body, extraHead = "" }) {
       text-transform: uppercase;
       letter-spacing: 0.12em;
       font-size: 10px;
-      font-weight: 700;
+      font-weight: 600;
       margin-bottom: 12px;
     }
     .value {
-      font-size: 36px;
+      font-size: 28px;
       font-weight: 700;
       line-height: 1;
       margin-bottom: 8px;
       letter-spacing: -0.02em;
+      font-family: 'JetBrains Mono', monospace;
     }
     .main-grid {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr);
-      gap: 20px;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 24px;
       align-items: start;
     }
-    form { display: grid; gap: 14px; }
-    label { display: grid; gap: 8px; color: var(--muted); font-size: 13px; font-weight: 500; }
+    form { display: grid; gap: 16px; }
+    label { display: grid; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
     input, button {
       width: 100%;
       border-radius: var(--radius-sm);
-      padding: 12px 16px;
+      padding: 10px 14px;
       border: 1px solid var(--line);
-      background: rgba(10, 10, 12, 0.6);
+      background: var(--bg);
       color: var(--text);
       font: inherit;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
     }
     input[type="checkbox"] {
       width: auto;
@@ -260,74 +247,79 @@ function layout({ title, body, extraHead = "" }) {
       align-items: center;
       gap: 10px;
       color: var(--text);
-      font-size: 14px;
+      font-size: 13px;
       cursor: pointer;
       user-select: none;
     }
     input:hover {
       border-color: var(--line-strong);
     }
-    input:focus, button:focus {
+    input:focus {
       outline: none;
-      border-color: var(--accent-2);
-      box-shadow: 0 0 0 3px var(--accent-glow);
+      border-color: var(--text);
     }
     button {
       cursor: pointer;
       font-weight: 600;
-      background: var(--accent-gradient);
-      color: #ffffff;
-      border: none;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+      background: var(--text);
+      color: var(--bg);
+      border: 1px solid var(--text);
+      box-shadow: none;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.08em;
     }
     button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
-      filter: brightness(1.08);
+      background: var(--bg);
+      color: var(--text);
+      border-color: var(--text);
     }
     button:active {
-      transform: translateY(0);
+      background: #111111;
     }
     button.danger {
-      background: var(--danger-gradient);
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
     }
     button.danger:hover {
-      box-shadow: 0 6px 16px rgba(239, 68, 68, 0.35);
+      background: var(--danger);
+      color: #ffffff;
+      border-color: var(--danger);
     }
     .msg {
-      margin: 0 0 24px;
-      padding: 14px 18px;
+      margin: 0 0 32px;
+      padding: 12px 16px;
       border-radius: var(--radius-sm);
-      background: var(--success-bg);
+      background: var(--bg);
       border: 1px solid var(--success-line);
       display: flex;
       justify-content: space-between;
       gap: 12px;
       align-items: center;
-      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.15);
-      animation: fadeIn 0.3s ease-out;
+      box-shadow: none;
+      animation: fadeIn 0.15s ease-out;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
+      from { opacity: 0; transform: translateY(-2px); }
       to { opacity: 1; transform: translateY(0); }
     }
     .msg button {
       width: auto;
-      min-width: 32px;
+      min-width: unset;
       padding: 0;
       border: 0;
       background: transparent;
       color: var(--muted);
-      font-size: 20px;
+      font-size: 18px;
       line-height: 1;
       cursor: pointer;
       box-shadow: none;
     }
     .msg button:hover {
       color: var(--text);
-      transform: none;
-      box-shadow: none;
+      background: transparent;
+      border: none;
     }
     .chip {
       display: inline-block;
@@ -335,21 +327,27 @@ function layout({ title, body, extraHead = "" }) {
       vertical-align: middle;
       line-height: normal;
       padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 11px;
+      border-radius: 0px;
+      font-size: 10px;
       font-weight: 600;
       border: 1px solid var(--line);
-      background: rgba(10, 10, 12, 0.6);
+      background: transparent;
       color: var(--muted);
       white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-    .chip.good { color: #34d399; border-color: rgba(52, 211, 153, 0.2); background: rgba(52, 211, 153, 0.05); }
-    .chip.bad { color: #f87171; border-color: rgba(248, 113, 113, 0.2); background: rgba(248, 113, 113, 0.05); }
+    .chip.good { color: var(--success-line); border-color: var(--success-line); background: transparent; }
+    .chip.bad { color: var(--danger); border-color: var(--danger); background: transparent; }
     .section-title {
       margin: 0 0 20px;
-      font-size: 18px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
     }
     .header-actions {
       display: flex;
@@ -363,13 +361,13 @@ function layout({ title, body, extraHead = "" }) {
     }
     .header-actions .button-link,
     .header-actions button {
-      min-width: 112px;
-      padding: 12px 16px;
+      min-width: 100px;
+      padding: 10px 14px;
       white-space: nowrap;
     }
     .muted-block {
       padding-top: 16px;
-      border-top: 1px solid var(--line);
+      border-top: 1px dashed var(--line);
     }
     details.revoke-details {
       margin-top: 14px;
@@ -393,7 +391,10 @@ function layout({ title, body, extraHead = "" }) {
       color: var(--danger);
       font-weight: 600;
       border-radius: var(--radius-sm);
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.08em;
     }
     details.revoke-details[open] .revoke-toggle {
       background: var(--danger);
@@ -419,26 +420,35 @@ function layout({ title, body, extraHead = "" }) {
       justify-content: center;
       min-width: 40px;
       padding: 10px 16px;
-      border: 1px solid var(--line-strong);
-      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--line);
+      background: transparent;
       color: var(--text);
       font-weight: 600;
       text-decoration: none;
       border-radius: var(--radius-sm);
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--line);
     }
     .button-link:hover {
       text-decoration: none;
-      border-color: var(--accent-2);
-      background: rgba(255, 255, 255, 0.06);
-      transform: translateY(-1px);
+      border-color: var(--text);
+      background: var(--text);
+      color: var(--bg);
+      opacity: 1;
     }
     .manifest-link {
       display: inline-block;
       max-width: 100%;
       overflow-wrap: anywhere;
       word-break: break-word;
-      color: var(--accent-2);
+      color: var(--text);
+      border-bottom: 1px solid var(--line);
+    }
+    .manifest-link:hover {
+      border-bottom-color: var(--text);
     }
     .kv {
       display: grid;
@@ -456,7 +466,7 @@ function layout({ title, body, extraHead = "" }) {
     }
     th, td {
       text-align: left;
-      padding: 14px 16px;
+      padding: 12px 14px;
       border-bottom: 1px solid var(--line);
       vertical-align: middle;
     }
@@ -464,18 +474,18 @@ function layout({ title, body, extraHead = "" }) {
       border-bottom: none;
     }
     tr:hover td {
-      background: rgba(255, 255, 255, 0.015);
+      background: #080808;
     }
     th {
       color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
+      font-size: 10px;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.1em;
-      border-bottom: 2px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
     }
     td code {
-      font-size: 12px;
+      font-size: 11px;
     }
     @media (max-width: 900px) {
       .stats, .main-grid { grid-template-columns: 1fr; }
@@ -485,7 +495,7 @@ function layout({ title, body, extraHead = "" }) {
       }
       .header-actions {
         width: 100%;
-        margin-top: 12px;
+        margin-top: 16px;
       }
       .header-actions form,
       .header-actions button {
@@ -517,7 +527,7 @@ function layout({ title, body, extraHead = "" }) {
     .captcha-wrapper {
       display: grid;
       grid-template-rows: 0fr;
-      transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease, margin 0.4s ease;
+      transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, margin 0.3s ease;
       overflow: hidden;
       opacity: 0;
       margin: 0;
@@ -898,7 +908,6 @@ function renderKeyDetails({
             </div>
           </td>
           <td>${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
-          <td>${entry.info_hash ? `<code>${escapeHtml(entry.info_hash)}</code>` : '<span class="small">n/a</span>'}</td>
           <td>${escapeHtml(formatTimestamp(entry.watched_at))}</td>
         </tr>
       `;
@@ -991,7 +1000,6 @@ function renderKeyDetails({
                         <tr>
                           <th>Media</th>
                           <th>Release</th>
-                          <th>Info Hash</th>
                           <th>Watched At</th>
                         </tr>
                       </thead>
@@ -1037,7 +1045,7 @@ function renderKeyDetails({
                 timeZone: timezone,
                 year: "numeric", month: "2-digit", day: "2-digit",
                 hour: "2-digit", minute: "2-digit", second: "2-digit",
-                hour12: false, timeZoneName: "short"
+                hour12: true, timeZoneName: "short"
               }).format(parsed);
             } catch (e) { return String(value); }
           }
@@ -1086,7 +1094,6 @@ function renderKeyDetails({
                         </div>
                       </td>
                       <td>\${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
-                      <td>\${entry.info_hash ? "<code>" + escapeHtml(entry.info_hash) + "</code>" : '<span class="small">n/a</span>'}</td>
                       <td>\${escapeHtml(formatTimestamp(entry.watched_at))}</td>
                     </tr>
                   \`;
@@ -1098,7 +1105,7 @@ function renderKeyDetails({
                   watchHistoryContainer.innerHTML = \`
                     <table>
                       <thead>
-                        <tr><th>Media</th><th>Release</th><th>Info Hash</th><th>Watched At</th></tr>
+                        <tr><th>Media</th><th>Release</th><th>Watched At</th></tr>
                       </thead>
                       <tbody data-watch-history-body>\${rows}</tbody>
                     </table>
@@ -1151,7 +1158,7 @@ function renderSessions({ sessions, currentSessionToken, timezone, message }) {
       <tr data-session-id="${session.id}">
         <td>
           <form method="post" action="/admin/sessions/${session.id}/rename" style="display: flex; align-items: center; gap: 8px;">
-            <input type="text" name="name" value="${escapeHtml(session.name)}" required style="padding: 6px 12px; font-size: 0.9em; border-radius: var(--radius-sm); border: 1px solid var(--line); background: rgba(10, 10, 12, 0.6); color: var(--text); width: 220px;" />
+            <input type="text" name="name" value="${escapeHtml(session.name)}" required style="padding: 6px 12px; font-size: 0.9em; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg); color: var(--text); width: 220px;" />
             <button type="submit" style="padding: 6px 12px; font-size: 0.8em; margin: 0; min-height: unset; line-height: 1.2; width: auto;">Rename</button>
           </form>
         </td>
