@@ -162,13 +162,13 @@ function requireAdmin(req, res, next) {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.status(401).send(renderLogin("Admin session required.", config.nullCaptchaUrl));
+    res.status(401).send(renderLogin("Admin session required."));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.status(401).send(renderLogin("Session has been revoked or is invalid.", config.nullCaptchaUrl));
+    res.status(401).send(renderLogin("Session has been revoked or is invalid."));
     return;
   }
 
@@ -378,13 +378,13 @@ app.get("/admin", (req, res) => {
   const cookies = parseCookies(req);
   const token = cookies.admin_session;
   if (!token || !verifySession(token, config.sessionSecret)) {
-    res.send(renderLogin("", config.nullCaptchaUrl));
+    res.send(renderLogin(""));
     return;
   }
 
   const dbSession = db.getSessionByToken(token);
   if (!dbSession || dbSession.revoked_at) {
-    res.send(renderLogin("Session has been revoked.", config.nullCaptchaUrl));
+    res.send(renderLogin("Session has been revoked."));
     return;
   }
 
@@ -414,38 +414,9 @@ function getSessionName(req) {
 }
 
 app.post("/admin/login", async (req, res) => {
-  if (config.nullCaptchaUrl) {
-    const captchaToken = req.body["null-captcha-token"] || "";
-
-    let isHuman = false;
-    try {
-      let baseUrl = config.nullCaptchaUrl;
-      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-        baseUrl = "https://" + baseUrl;
-      }
-      const verifyUrl = `${baseUrl}/api/validate`;
-      const verifyResponse = await fetch(verifyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token: captchaToken,
-        }),
-      });
-      const data = await verifyResponse.json();
-      isHuman = !!data.success;
-    } catch (error) {
-      console.error("[null-captcha] Verification failed with error:", error);
-    }
-
-    if (!isHuman) {
-      res.status(400).send(renderLogin("CAPTCHA verification failed. Please try again.", config.nullCaptchaUrl));
-      return;
-    }
-  }
-
   const provided = String(req.body.password || "");
   if (!timingSafeCompare(hashPassword(provided), hashPassword(config.adminPassword))) {
-    res.status(401).send(renderLogin("Invalid password.", config.nullCaptchaUrl));
+    res.status(401).send(renderLogin("Invalid password."));
     return;
   }
 

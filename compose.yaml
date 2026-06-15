@@ -30,7 +30,6 @@ services:
       - BASE_URL=https://bitlab.dill.moe
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - SESSION_SECRET=${SESSION_SECRET}
-      - NULL_CAPTCHA_URL=${NULL_CAPTCHA_URL:-}
       - BITMAGNET_URL=http://localhost:3333
       - BITMAGNET_WEBUI_URL=https://bitlab.dill.moe/admin/bitmagnet/
       - TORRSERVER_URL=http://localhost:8090

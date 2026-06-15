@@ -509,22 +509,6 @@ function layout({ title, body, extraHead = "" }) {
         width: 100%;
       }
     }
-    .captcha-wrapper {
-      display: grid;
-      grid-template-rows: 0fr;
-      transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, margin 0.3s ease;
-      overflow: hidden;
-      opacity: 0;
-      margin: 0;
-    }
-    .captcha-wrapper.revealed {
-      grid-template-rows: 1fr;
-      opacity: 1;
-      margin: 16px 0;
-    }
-    .captcha-inner {
-      min-height: 0;
-    }
   </style>
   ${extraHead}
 </head>
@@ -581,15 +565,9 @@ function renderMessage(message) {
   return `<div class="msg" data-flash-message><div>${escapeHtml(message)}</div><button type="button" aria-label="Dismiss notification" data-dismiss-flash>&times;</button></div>`;
 }
 
-function renderLogin(message, nullCaptchaUrl = "") {
-  let baseUrl = nullCaptchaUrl;
-  if (baseUrl && !baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-    baseUrl = "https://" + baseUrl;
-  }
-
+function renderLogin(message) {
   return layout({
     title: "Login",
-    extraHead: baseUrl ? `<script src="${baseUrl}/js/null.js" async defer></script>` : "",
     body: `
       <div class="login-shell">
         <section class="hero">
@@ -605,71 +583,10 @@ function renderLogin(message, nullCaptchaUrl = "") {
             <label>Password
               <input type="password" name="password" placeholder="ADMIN_PASSWORD" required />
             </label>
-            ${
-              baseUrl
-                ? `
-                <div class="captcha-wrapper">
-                  <div class="captcha-inner">
-                    <div id="null-captcha-widget" style="margin: 0 auto; display: flex; justify-content: center;"></div>
-                  </div>
-                </div>
-                <input type="hidden" name="null-captcha-token" id="null-captcha-token" />
-                `
-                : ""
-            }
             <button type="submit">Sign In</button>
           </form>
         </section>
       </div>
-      ${
-        baseUrl
-          ? `
-          <script>
-            (() => {
-              const form = document.querySelector('form[action="/admin/login"]');
-              if (!form) return;
-
-              window.addEventListener('load', () => {
-                const initCaptcha = () => {
-                  if (window.NullCaptcha) {
-                    window.NullCaptcha.render('null-captcha-widget', {
-                      onSuccess: (token) => {
-                        const input = document.getElementById('null-captcha-token');
-                        if (input) {
-                          input.value = token;
-                        }
-                        form.submit();
-                      },
-                      onFailure: (error) => {
-                        console.error("CAPTCHA Verification Failed:", error);
-                      }
-                    });
-                  } else {
-                    setTimeout(initCaptcha, 100);
-                  }
-                };
-                initCaptcha();
-              });
-
-              form.addEventListener('submit', (e) => {
-                const wrapper = document.querySelector('.captcha-wrapper');
-                if (wrapper && !wrapper.classList.contains('revealed')) {
-                  e.preventDefault();
-                  wrapper.classList.add('revealed');
-                  return;
-                }
-
-                const tokenInput = document.getElementById('null-captcha-token');
-                if (!tokenInput || !tokenInput.value) {
-                  e.preventDefault();
-                  alert("Please verify the CAPTCHA first.");
-                }
-              });
-            })();
-          </script>
-          `
-          : ""
-      }
     `,
   });
 }

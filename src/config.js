@@ -23,7 +23,6 @@ function getConfig() {
     dataDir,
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
-    nullCaptchaUrl: process.env.NULL_CAPTCHA_URL || "",
     sessionSecret: (function() {
       if (process.env.SESSION_SECRET) {
         return process.env.SESSION_SECRET;
