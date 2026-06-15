@@ -3,7 +3,8 @@ const path = require("node:path");
 
 const dataDir = path.resolve(process.cwd(), "data");
 const defaultStreamTrackerSweepMs = 5000;
-const defaultStreamTrackerStaleMs = 1000 * 60;
+const defaultStreamTrackerIdleMs = 1000 * 30;
+const defaultStreamTrackerAbortedIdleMs = 1000 * 3;
 
 function parsePositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -32,9 +33,13 @@ function getConfig() {
       1000,
       Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_SWEEP_MS, defaultStreamTrackerSweepMs)),
     ),
-    streamTrackerStaleMs: Math.max(
-      5000,
-      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_STALE_MS, defaultStreamTrackerStaleMs)),
+    streamTrackerIdleMs: Math.max(
+      1000,
+      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_IDLE_MS, defaultStreamTrackerIdleMs)),
+    ),
+    streamTrackerAbortedIdleMs: Math.max(
+      500,
+      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_ABORTED_IDLE_MS, defaultStreamTrackerAbortedIdleMs)),
     ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",

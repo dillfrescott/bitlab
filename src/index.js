@@ -26,7 +26,8 @@ const addonInterface = createAddonInterface({ db, config, bitmagnet, torrentServ
 const app = express();
 const activeStreamsByKey = new Map();
 const STREAM_TRACKER_SWEEP_MS = config.streamTrackerSweepMs;
-const STREAM_TRACKER_STALE_MS = config.streamTrackerStaleMs;
+const STREAM_TRACKER_IDLE_MS = config.streamTrackerIdleMs;
+const STREAM_TRACKER_ABORTED_IDLE_MS = config.streamTrackerAbortedIdleMs;
 let nextTrackedConnectionId = 1;
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -93,16 +94,10 @@ function isTrackedStreamClosed(connection) {
   );
 }
 
-function touchTrackedStream(connection) {
-  const reqSocket = connection?.req?.socket;
-  const resSocket = connection?.res?.socket;
-  const nextBytesRead = reqSocket?.bytesRead || 0;
-  const nextBytesWritten = resSocket?.bytesWritten || 0;
-  if (nextBytesRead !== connection.lastBytesRead || nextBytesWritten !== connection.lastBytesWritten) {
-    connection.lastActivityAt = Date.now();
-    connection.lastBytesRead = nextBytesRead;
-    connection.lastBytesWritten = nextBytesWritten;
-  }
+function wasConnectionAborted(connection) {
+  const req = connection?.req;
+  const res = connection?.res;
+  return Boolean(req?.aborted || req?.destroyed || res?.socket?.destroyed);
 }
 
 function pruneTrackedPlaybackEntry(streams, keyToken, playbackToken) {
@@ -112,25 +107,38 @@ function pruneTrackedPlaybackEntry(streams, keyToken, playbackToken) {
   }
 
   const now = Date.now();
+  let hasOpenConnection = false;
+
   for (const [connectionId, connection] of entry.connections.entries()) {
-    touchTrackedStream(connection);
-    const stale = now - connection.lastActivityAt > STREAM_TRACKER_STALE_MS;
-    if (stale) {
-      if (connection.res && !connection.res.destroyed) {
-        console.log(`[play] closing stale connection key=${keyToken} playback=${playbackToken} id=${connectionId}`);
-        connection.res.destroy();
+    if (isTrackedStreamClosed(connection)) {
+      if (wasConnectionAborted(connection)) {
+        entry.abortedAt = now;
       }
       entry.connections.delete(connectionId);
-    } else if (isTrackedStreamClosed(connection)) {
-      entry.connections.delete(connectionId);
+    } else {
+      hasOpenConnection = true;
     }
   }
 
-  const expired = !verifyPlaybackToken(playbackToken, config.sessionSecret);
-  if (expired || entry.connections.size === 0) {
+  if (hasOpenConnection) {
+    entry.lastActivityAt = now;
+    entry.abortedAt = null;
+  }
+
+  if (!verifyPlaybackToken(playbackToken, config.sessionSecret)) {
     clearTrackedStreamTimer(entry);
     streams.delete(playbackToken);
     return false;
+  }
+
+  if (entry.connections.size === 0) {
+    const lastActivity = entry.abortedAt || entry.lastActivityAt || entry.startedAt || 0;
+    const idleMs = entry.abortedAt ? STREAM_TRACKER_ABORTED_IDLE_MS : STREAM_TRACKER_IDLE_MS;
+    if (now - lastActivity > idleMs) {
+      clearTrackedStreamTimer(entry);
+      streams.delete(playbackToken);
+      return false;
+    }
   }
 
   return true;
@@ -173,6 +181,8 @@ function beginTrackedStream(keyToken, playbackToken, req, res) {
   const entry = existingEntry || {
     connections: new Map(),
     sweepTimer: null,
+    startedAt: Date.now(),
+    lastActivityAt: Date.now(),
   };
   const connectionId = nextTrackedConnectionId++;
   const connection = {
@@ -181,11 +191,7 @@ function beginTrackedStream(keyToken, playbackToken, req, res) {
     startedAt: Date.now(),
     initialBytesRead: req?.socket?.bytesRead || 0,
     initialBytesWritten: res?.socket?.bytesWritten || 0,
-    lastActivityAt: Date.now(),
-    lastBytesRead: req?.socket?.bytesRead || 0,
-    lastBytesWritten: res?.socket?.bytesWritten || 0,
   };
-  touchTrackedStream(connection);
   entry.connections.set(connectionId, connection);
   streams.set(playback, entry);
   activeStreamsByKey.set(key, streams);
@@ -238,17 +244,6 @@ function releaseTrackedStream(keyToken, playbackToken, connectionId) {
 
   if (connectionId !== undefined) {
     entry.connections.delete(connectionId);
-  }
-
-  if (entry.connections.size === 0) {
-    clearTrackedStreamTimer(entry);
-    currentStreams.delete(playback);
-  } else {
-    currentStreams.set(playback, entry);
-  }
-
-  if (currentStreams.size === 0) {
-    activeStreamsByKey.delete(key);
   }
 }
 
@@ -1025,8 +1020,6 @@ app.get("/play/:token", async (req, res) => {
     db.updateKeyLastActive(key.id);
 
     const releaseTrackedStream = beginTrackedStream(key.token, req.params.token, req, res);
-    req.on("aborted", releaseTrackedStream);
-    req.on("close", releaseTrackedStream);
     res.on("close", releaseTrackedStream);
     res.on("finish", releaseTrackedStream);
     res.on("error", releaseTrackedStream);
