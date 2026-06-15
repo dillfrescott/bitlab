@@ -62,7 +62,6 @@ function getPlaybackEntry(keyToken, playbackToken) {
   if (typeof entry === "number") {
     const normalized = {
       connections: new Map(),
-      sockets: new Set(),
       sweepTimer: null,
     };
     streams.set(playback, normalized);
@@ -70,9 +69,6 @@ function getPlaybackEntry(keyToken, playbackToken) {
   }
   if (!(entry.connections instanceof Map)) {
     entry.connections = new Map();
-  }
-  if (!(entry.sockets instanceof Set)) {
-    entry.sockets = new Set();
   }
   return entry;
 }
@@ -114,15 +110,8 @@ function pruneTrackedPlaybackEntry(streams, keyToken, playbackToken) {
     }
   }
 
-  for (const socket of Array.from(entry.sockets)) {
-    if (!socket || socket.destroyed) {
-      entry.sockets.delete(socket);
-    }
-  }
-
-  if (hasOpenConnection || entry.sockets.size > 0) {
+  if (hasOpenConnection) {
     entry.lastActivityAt = now;
-    entry.abortedAt = null;
   }
 
   if (!verifyPlaybackToken(playbackToken, config.sessionSecret)) {
@@ -131,7 +120,7 @@ function pruneTrackedPlaybackEntry(streams, keyToken, playbackToken) {
     return false;
   }
 
-  if (entry.connections.size === 0 && entry.sockets.size === 0) {
+  if (entry.connections.size === 0) {
     const lastActivity = entry.lastActivityAt || entry.startedAt || 0;
     if (now - lastActivity > STREAM_TRACKER_IDLE_MS) {
       clearTrackedStreamTimer(entry);
@@ -179,7 +168,6 @@ function beginTrackedStream(keyToken, playbackToken, req, res) {
   const existingEntry = getPlaybackEntry(key, playback);
   const entry = existingEntry || {
     connections: new Map(),
-    sockets: new Set(),
     sweepTimer: null,
     startedAt: Date.now(),
     lastActivityAt: Date.now(),
@@ -194,19 +182,8 @@ function beginTrackedStream(keyToken, playbackToken, req, res) {
   };
   entry.connections.set(connectionId, connection);
   entry.lastActivityAt = Date.now();
-  entry.abortedAt = null;
   streams.set(playback, entry);
   activeStreamsByKey.set(key, streams);
-
-  const socket = req?.socket;
-  if (socket && !socket.destroyed && !entry.sockets.has(socket)) {
-    entry.sockets.add(socket);
-    const onSocketClose = () => {
-      entry.sockets.delete(socket);
-      entry.lastActivityAt = Date.now();
-    };
-    socket.once("close", onSocketClose);
-  }
 
   if (!entry.sweepTimer) {
     entry.sweepTimer = setInterval(() => {
@@ -256,7 +233,6 @@ function releaseTrackedStream(keyToken, playbackToken, connectionId) {
   }
 
   entry.lastActivityAt = Date.now();
-  entry.abortedAt = null;
 }
 
 function parseRange(rangeHeader, totalSize) {
