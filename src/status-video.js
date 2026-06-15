@@ -84,23 +84,14 @@ function generateVideo(outputPath, lines) {
 function getStatusVideoPath(config, options) {
   const cacheDir = path.join(config.dataDir, "status-videos");
   const keySlug = slugify(options.keyName);
-  const kind = options.kind === "paused" ? options.kind : "limit";
-  const limitPart = Number.isInteger(options.limit) ? `-${options.limit}` : "";
-  const filePath = path.join(cacheDir, `${kind}-${keySlug}${limitPart}-v${STATUS_VIDEO_VERSION}.mp4`);
+  const filePath = path.join(cacheDir, `paused-${keySlug}-v${STATUS_VIDEO_VERSION}.mp4`);
 
   if (!fs.existsSync(filePath)) {
-    const lines =
-      kind === "paused"
-        ? [
-            "Streaming paused",
-            `Key: ${options.keyName}`,
-            "This key has been paused by the admin.",
-          ]
-        : [
-            "Streaming limit reached",
-            `Key: ${options.keyName}`,
-            `This key is limited to ${options.limit} concurrent stream(s).`,
-          ];
+    const lines = [
+      "Streaming paused",
+      `Key: ${options.keyName}`,
+      "This key has been paused by the admin.",
+    ];
     generateVideo(filePath, lines);
   }
 

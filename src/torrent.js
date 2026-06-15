@@ -312,7 +312,6 @@ function createTorrentService(config) {
   return {
     inspectMagnet,
     streamSource,
-    streamRelease: streamSource,
   };
 }
 

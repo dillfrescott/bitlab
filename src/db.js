@@ -23,7 +23,6 @@ function openDatabase(config) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       token TEXT NOT NULL UNIQUE,
-      max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_active_at TEXT,
       paused_at TEXT,
@@ -56,7 +55,6 @@ function openDatabase(config) {
     );
   `);
 
-  ensureColumn(db, "addon_keys", "max_concurrent_streams", "max_concurrent_streams INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "addon_keys", "last_active_at", "last_active_at TEXT");
   ensureColumn(db, "addon_keys", "paused_at", "paused_at TEXT");
   db.exec(`
@@ -66,8 +64,8 @@ function openDatabase(config) {
 
   const stmts = {
     createKey: db.prepare(`
-      INSERT INTO addon_keys (name, token, max_concurrent_streams)
-      VALUES (?, ?, ?)
+      INSERT INTO addon_keys (name, token)
+      VALUES (?, ?)
     `),
     revokeKey: db.prepare(`
       UPDATE addon_keys
@@ -75,32 +73,20 @@ function openDatabase(config) {
       WHERE id = ? AND revoked_at IS NULL
     `),
     getActiveKeys: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at
+      SELECT id, name, token, created_at, last_active_at, paused_at
       FROM addon_keys
       WHERE revoked_at IS NULL
       ORDER BY id DESC
     `),
-    getRevokedKeys: db.prepare(`
-      SELECT id, name, token, created_at, revoked_at
-      FROM addon_keys
-      WHERE revoked_at IS NOT NULL
-      ORDER BY id DESC
-      LIMIT 20
-    `),
     getKeyByToken: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at, revoked_at
+      SELECT id, name, token, created_at, last_active_at, paused_at, revoked_at
       FROM addon_keys
       WHERE token = ?
     `),
     getKeyById: db.prepare(`
-      SELECT id, name, token, max_concurrent_streams, created_at, last_active_at, paused_at, revoked_at
+      SELECT id, name, token, created_at, last_active_at, paused_at, revoked_at
       FROM addon_keys
       WHERE id = ?
-    `),
-    updateKeyLimit: db.prepare(`
-      UPDATE addon_keys
-      SET max_concurrent_streams = ?
-      WHERE id = ? AND revoked_at IS NULL
     `),
     updateKeyLastActive: db.prepare(`
       UPDATE addon_keys
@@ -164,8 +150,8 @@ function openDatabase(config) {
     `),
   };
 
-  function createAddonKey(name, token, maxConcurrentStreams = 1) {
-    const result = stmts.createKey.run(name, token, maxConcurrentStreams);
+  function createAddonKey(name, token) {
+    const result = stmts.createKey.run(name, token);
     return Number(result.lastInsertRowid);
   }
 
@@ -184,7 +170,6 @@ function openDatabase(config) {
   });
 
   return {
-    raw: db,
     createAddonKey,
     revokeKey(id) {
       revokeAddonKey(id);
@@ -192,17 +177,11 @@ function openDatabase(config) {
     getActiveKeys() {
       return stmts.getActiveKeys.all().map(mapKey);
     },
-    getRevokedKeys() {
-      return stmts.getRevokedKeys.all();
-    },
     getKeyByToken(token) {
       return mapKey(stmts.getKeyByToken.get(token));
     },
     getKeyById(id) {
       return mapKey(stmts.getKeyById.get(id));
-    },
-    updateKeyLimit(id, maxConcurrentStreams) {
-      stmts.updateKeyLimit.run(maxConcurrentStreams, id);
     },
     updateKeyLastActive(id) {
       stmts.updateKeyLastActive.run(id);

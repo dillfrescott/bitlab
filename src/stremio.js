@@ -1237,7 +1237,6 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
 
   builder.defineStreamHandler(async (args) => {
     const { mediaId, releaseId, season, episode } = parseStreamRequestId(args.id, args.type);
-    const mediaExternalIds = parseExternalIds(mediaId || args.id);
     console.log(
       `[addon] stream start type=${args.type} id=${JSON.stringify(args.id)} mediaId=${JSON.stringify(mediaId)} season=${JSON.stringify(season)} episode=${JSON.stringify(episode)}`,
     );

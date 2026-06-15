@@ -2,9 +2,8 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 
 const dataDir = path.resolve(process.cwd(), "data");
-const defaultStreamTrackerSweepMs = 5000;
-const defaultStreamTrackerIdleMs = 1000 * 30;
-const defaultStreamTrackerAbortedIdleMs = 1000 * 3;
+const defaultStreamTrackerSweepMs = 2000;
+const defaultStreamTrackerIdleMs = 1000 * 5;
 
 function parsePositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -37,10 +36,6 @@ function getConfig() {
       1000,
       Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_IDLE_MS, defaultStreamTrackerIdleMs)),
     ),
-    streamTrackerAbortedIdleMs: Math.max(
-      500,
-      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_ABORTED_IDLE_MS, defaultStreamTrackerAbortedIdleMs)),
-    ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
     nullCaptchaUrl: process.env.NULL_CAPTCHA_URL || "",
@@ -53,7 +48,6 @@ function getConfig() {
     })(),
     sessionTtlMs: 1000 * 60 * 60 * 24 * 7, // 7 days
     streamTokenTtlMs: 1000 * 60 * 60 * 4,
-    catalogPageSize: 50,
     metadataTimeoutMs: Number(process.env.METADATA_TIMEOUT_MS || 1000 * 30),
     timezone: getTimezone(),
     bitmagnetUrl,

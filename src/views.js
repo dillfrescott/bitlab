@@ -700,7 +700,7 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
           </div>
           <div class="small">Created ${escapeHtml(key.created_at)}</div>
           <div class="small" style="margin-top: 8px;">Status: <span data-key-status>${key.paused_at ? "Paused" : "Active"}</span></div>
-          <div class="small" style="margin-top: 8px;">Concurrent streams: <span data-key-active-streams>${key.activeStreams}</span> / ${escapeHtml(key.max_concurrent_streams)}</div>
+          <div class="small" style="margin-top: 8px;">Active streams: <span data-key-active-streams>${key.activeStreams}</span></div>
           <div class="reveal-block" style="margin-top: 8px;">
             <button type="button" class="reveal-toggle">Click to Reveal</button>
             <div class="reveal-secret" hidden>
@@ -835,6 +835,15 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
 
               // Update and re-order key cards
               const list = document.querySelector(".list");
+              const currentCardIds = list
+                ? Array.from(list.querySelectorAll("[data-key-id]")).map((card) =>
+                    Number(card.getAttribute("data-key-id")),
+                  )
+                : [];
+              const desiredCardIds = data.activeKeys.map((key) => key.id);
+              const orderChanged =
+                currentCardIds.length !== desiredCardIds.length ||
+                currentCardIds.some((id, idx) => id !== desiredCardIds[idx]);
 
               data.activeKeys.forEach((key, index) => {
                 const card = document.querySelector(\`[data-key-id="\${key.id}"]\`);
@@ -842,9 +851,13 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
 
                 const indicator = card.querySelector("[data-key-live-indicator]");
                 if (indicator) {
-                  indicator.innerHTML = key.activeStreams > 0
-                    ? '<span class="live-indicator" title="Active stream"></span>'
-                    : "";
+                  const hasDot = Boolean(indicator.querySelector(".live-indicator"));
+                  const shouldHaveDot = key.activeStreams > 0;
+                  if (shouldHaveDot && !hasDot) {
+                    indicator.innerHTML = '<span class="live-indicator" title="Active stream"></span>';
+                  } else if (!shouldHaveDot && hasDot) {
+                    indicator.innerHTML = "";
+                  }
                 }
 
                 const status = card.querySelector("[data-key-status]");
@@ -853,13 +866,12 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
                 const active = card.querySelector("[data-key-active-streams]");
                 if (active) active.textContent = key.activeStreams;
 
-                // Move card to its sorted position (always append to ensure correct order)
-                if (list) {
+                if (orderChanged && list) {
                   list.appendChild(card);
                 }
               });
-              if (data.activeKeys.length > 0) {
-                console.log("Dashboard updated and re-ordered", data.activeKeys.map(k => k.id));
+              if (orderChanged && data.activeKeys.length > 0) {
+                console.log("Dashboard re-ordered", data.activeKeys.map(k => k.id));
               }
             } catch (err) {
               console.error("Failed to update dashboard:", err);
@@ -922,7 +934,7 @@ function renderKeyDetails({
         <section class="hero">
           <div>
             <h1>${escapeHtml(key.name)}</h1>
-            <p>Per-key stream limits and watch history.</p>
+            <p>Per-key access state and watch history.</p>
           </div>
           <div class="header-actions">
             <a class="button-link" href="/admin">Back</a>
@@ -950,16 +962,6 @@ function renderKeyDetails({
         </section>
         <section class="main-grid" style="margin-top: 16px;">
           <div class="stack">
-            <article class="panel">
-              <h2 class="section-title">Concurrency Limit</h2>
-              <form method="post" action="/admin/keys/${key.id}/settings">
-                <label>Max concurrent streams
-                  <input type="number" min="1" step="1" name="maxConcurrentStreams" value="${escapeHtml(key.max_concurrent_streams)}" required />
-                </label>
-                <button type="submit">Save Limit</button>
-              </form>
-              <div class="small muted-block">This key is blocked when it already has the configured number of active streams.</div>
-            </article>
             <article class="panel">
               <h2 class="section-title">Access State</h2>
               <div class="small">Current state: <span data-key-status-text>${key.paused_at ? `Paused since ${escapeHtml(key.paused_at)}` : "Active"}</span></div>
@@ -1075,41 +1077,65 @@ function renderKeyDetails({
 
               if (data.watchHistory && data.watchHistory.length > 0) {
                 const activeHashes = data.activePlaybackHashes || [];
-                const rows = data.watchHistory.map(entry => {
-                  const episodeLabel = (Number.isInteger(entry.season) && Number.isInteger(entry.episode))
-                    ? \`S\${String(entry.season).padStart(2, "0")}E\${String(entry.episode).padStart(2, "0")}\`
-                    : "";
-                  
-                  const isLive = activeHashes.includes(entry.playback_token_hash);
-                  
-                  return \`
-                    <tr data-history-id="\${entry.id}" data-playback-hash="\${entry.playback_token_hash}">
-                      <td>
-                        <div style="display: flex; align-items: center;">
-                          <span data-live-indicator-container>\${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
-                          <div>
-                            <strong>\${escapeHtml(entry.media_title)}</strong>
-                            <div class="small">\${escapeHtml(entry.media_type || "unknown")}\${episodeLabel ? " | " + escapeHtml(episodeLabel) : ""}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>\${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
-                      <td>\${escapeHtml(formatTimestamp(entry.watched_at))}</td>
-                    </tr>
-                  \`;
-                }).join("");
+                const existingRows = watchHistoryBody
+                  ? Array.from(watchHistoryBody.querySelectorAll("tr[data-history-id]"))
+                  : [];
+                const existingIds = existingRows.map((row) => row.getAttribute("data-history-id"));
+                const incomingIds = data.watchHistory.map((entry) => String(entry.id));
+                const sameRows =
+                  existingIds.length === incomingIds.length &&
+                  existingIds.every((id, idx) => id === incomingIds[idx]);
 
-                if (watchHistoryBody) {
-                  watchHistoryBody.innerHTML = rows;
-                } else if (watchHistoryContainer) {
-                  watchHistoryContainer.innerHTML = \`
-                    <table>
-                      <thead>
-                        <tr><th>Media</th><th>Release</th><th>Watched At</th></tr>
-                      </thead>
-                      <tbody data-watch-history-body>\${rows}</tbody>
-                    </table>
-                  \`;
+                if (sameRows && watchHistoryBody) {
+                  existingRows.forEach((row) => {
+                    const hash = row.getAttribute("data-playback-hash");
+                    const container = row.querySelector("[data-live-indicator-container]");
+                    if (!container) return;
+                    const hasDot = Boolean(container.querySelector(".live-indicator"));
+                    const shouldHaveDot = activeHashes.includes(hash);
+                    if (shouldHaveDot && !hasDot) {
+                      container.innerHTML = '<span class="live-indicator" title="Active stream"></span>';
+                    } else if (!shouldHaveDot && hasDot) {
+                      container.innerHTML = "";
+                    }
+                  });
+                } else {
+                  const rows = data.watchHistory.map(entry => {
+                    const episodeLabel = (Number.isInteger(entry.season) && Number.isInteger(entry.episode))
+                      ? \`S\${String(entry.season).padStart(2, "0")}E\${String(entry.episode).padStart(2, "0")}\`
+                      : "";
+
+                    const isLive = activeHashes.includes(entry.playback_token_hash);
+
+                    return \`
+                      <tr data-history-id="\${entry.id}" data-playback-hash="\${entry.playback_token_hash}">
+                        <td>
+                          <div style="display: flex; align-items: center;">
+                            <span data-live-indicator-container>\${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
+                            <div>
+                              <strong>\${escapeHtml(entry.media_title)}</strong>
+                              <div class="small">\${escapeHtml(entry.media_type || "unknown")}\${episodeLabel ? " | " + escapeHtml(episodeLabel) : ""}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>\${escapeHtml(entry.release_name || entry.file_name || "n/a")}</td>
+                        <td>\${escapeHtml(formatTimestamp(entry.watched_at))}</td>
+                      </tr>
+                    \`;
+                  }).join("");
+
+                  if (watchHistoryBody) {
+                    watchHistoryBody.innerHTML = rows;
+                  } else if (watchHistoryContainer) {
+                    watchHistoryContainer.innerHTML = \`
+                      <table>
+                        <thead>
+                          <tr><th>Media</th><th>Release</th><th>Watched At</th></tr>
+                        </thead>
+                        <tbody data-watch-history-body>\${rows}</tbody>
+                      </table>
+                    \`;
+                  }
                 }
 
                 if (watchCount) watchCount.textContent = data.watchHistory.length;
