@@ -24,10 +24,7 @@ const torrentService = createTorrentService(config);
 const bitmagnet = createBitmagnetService(config);
 const addonInterface = createAddonInterface({ db, config, bitmagnet, torrentService });
 const app = express();
-const activeStreamsByKey = new Map();
-const STREAM_TRACKER_SWEEP_MS = config.streamTrackerSweepMs;
-const STREAM_TRACKER_IDLE_MS = config.streamTrackerIdleMs;
-let nextTrackedConnectionId = 1;
+
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 function runWatchHistoryCleanup() {
@@ -46,193 +43,6 @@ setInterval(runWatchHistoryCleanup, ONE_DAY_MS);
 
 function hashPlaybackToken(token) {
   return crypto.createHash("sha256").update(String(token || "")).digest("hex");
-}
-
-function getPlaybackEntry(keyToken, playbackToken) {
-  const key = String(keyToken || "");
-  const playback = String(playbackToken || "");
-  const streams = activeStreamsByKey.get(key);
-  if (!streams) {
-    return null;
-  }
-  const entry = streams.get(playback);
-  if (!entry) {
-    return null;
-  }
-  if (typeof entry === "number") {
-    const normalized = {
-      connections: new Map(),
-      sweepTimer: null,
-    };
-    streams.set(playback, normalized);
-    return normalized;
-  }
-  if (!(entry.connections instanceof Map)) {
-    entry.connections = new Map();
-  }
-  return entry;
-}
-
-function clearTrackedStreamTimer(entry) {
-  if (entry?.sweepTimer) {
-    clearInterval(entry.sweepTimer);
-    entry.sweepTimer = null;
-  }
-}
-
-function isTrackedStreamClosed(connection) {
-  const req = connection?.req;
-  const res = connection?.res;
-  return Boolean(
-    req?.aborted ||
-      req?.destroyed ||
-      res?.destroyed ||
-      res?.writableEnded ||
-      res?.closed ||
-      res?.socket?.destroyed,
-  );
-}
-
-function pruneTrackedPlaybackEntry(streams, keyToken, playbackToken) {
-  const entry = getPlaybackEntry(keyToken, playbackToken);
-  if (!entry) {
-    return false;
-  }
-
-  const now = Date.now();
-  let hasOpenConnection = false;
-
-  for (const [connectionId, connection] of entry.connections.entries()) {
-    if (isTrackedStreamClosed(connection)) {
-      entry.connections.delete(connectionId);
-    } else {
-      hasOpenConnection = true;
-    }
-  }
-
-  if (hasOpenConnection) {
-    entry.lastActivityAt = now;
-  }
-
-  if (!verifyPlaybackToken(playbackToken, config.sessionSecret)) {
-    clearTrackedStreamTimer(entry);
-    streams.delete(playbackToken);
-    return false;
-  }
-
-  if (entry.connections.size === 0) {
-    const lastActivity = entry.lastActivityAt || entry.startedAt || 0;
-    if (now - lastActivity > STREAM_TRACKER_IDLE_MS) {
-      clearTrackedStreamTimer(entry);
-      streams.delete(playbackToken);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function pruneTrackedStreams(keyToken) {
-  const key = String(keyToken || "");
-  const streams = activeStreamsByKey.get(key);
-  if (!streams) {
-    return;
-  }
-
-  for (const [playback] of streams.entries()) {
-    pruneTrackedPlaybackEntry(streams, key, playback);
-  }
-
-  if (streams.size === 0) {
-    activeStreamsByKey.delete(key);
-  }
-}
-
-function getActiveStreamCount(keyToken) {
-  pruneTrackedStreams(keyToken);
-  const streams = activeStreamsByKey.get(String(keyToken || ""));
-  return streams ? streams.size : 0;
-}
-
-function getActivePlaybackHashes(keyToken) {
-  pruneTrackedStreams(keyToken);
-  const streams = activeStreamsByKey.get(String(keyToken || ""));
-  if (!streams) return [];
-  return Array.from(streams.keys()).map(hashPlaybackToken);
-}
-
-function beginTrackedStream(keyToken, playbackToken, req, res) {
-  const key = String(keyToken || "");
-  const playback = String(playbackToken || "");
-  const streams = activeStreamsByKey.get(key) || new Map();
-  const existingEntry = getPlaybackEntry(key, playback);
-  const entry = existingEntry || {
-    connections: new Map(),
-    sweepTimer: null,
-    startedAt: Date.now(),
-    lastActivityAt: Date.now(),
-  };
-  const connectionId = nextTrackedConnectionId++;
-  const connection = {
-    req,
-    res,
-    startedAt: Date.now(),
-    initialBytesRead: req?.socket?.bytesRead || 0,
-    initialBytesWritten: res?.socket?.bytesWritten || 0,
-  };
-  entry.connections.set(connectionId, connection);
-  entry.lastActivityAt = Date.now();
-  streams.set(playback, entry);
-  activeStreamsByKey.set(key, streams);
-
-  if (!entry.sweepTimer) {
-    entry.sweepTimer = setInterval(() => {
-      const currentStreams = activeStreamsByKey.get(key);
-      if (!currentStreams) {
-        return;
-      }
-      const stillTracked = pruneTrackedPlaybackEntry(currentStreams, key, playback);
-      if (!stillTracked && currentStreams.size === 0) {
-        activeStreamsByKey.delete(key);
-      }
-    }, STREAM_TRACKER_SWEEP_MS);
-    if (typeof entry.sweepTimer.unref === "function") {
-      entry.sweepTimer.unref();
-    }
-  }
-
-  let released = false;
-  const finalize = () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    releaseTrackedStream(key, playback, connectionId);
-  };
-
-  res.on("finish", finalize);
-  res.on("close", finalize);
-  res.on("error", finalize);
-}
-
-function releaseTrackedStream(keyToken, playbackToken, connectionId) {
-  const key = String(keyToken || "");
-  const playback = String(playbackToken || "");
-  const currentStreams = activeStreamsByKey.get(key);
-  if (!currentStreams) {
-    return;
-  }
-
-  const entry = getPlaybackEntry(key, playback);
-  if (!entry) {
-    return;
-  }
-
-  if (connectionId !== undefined) {
-    entry.connections.delete(connectionId);
-  }
-
-  entry.lastActivityAt = Date.now();
 }
 
 function parseRange(rangeHeader, totalSize) {
@@ -390,30 +200,17 @@ function getWatchHistoryLimit(req) {
 
 function renderAdmin(req, res, message = "") {
   const activeKeys = db.getActiveKeys()
-    .map((key) => ({
-      ...key,
-      activeStreams: getActiveStreamCount(key.token),
-    }))
     .sort((a, b) => {
-      const aActive = a.activeStreams > 0;
-      const bActive = b.activeStreams > 0;
-      if (aActive && !bActive) return -1;
-      if (!aActive && bActive) return 1;
-
-            const aTime = a.last_active_at ? new Date(a.last_active_at).getTime() : 0;
+      const aTime = a.last_active_at ? new Date(a.last_active_at).getTime() : 0;
       const bTime = b.last_active_at ? new Date(b.last_active_at).getTime() : 0;
       if (aTime !== bTime) return bTime - aTime;
-
-            return b.id - a.id;
+      return b.id - a.id;
     });
-
-  const totalActiveStreams = activeKeys.reduce((acc, key) => acc + key.activeStreams, 0);
 
   res.send(
     renderDashboard({
       baseUrl: getBaseUrl(req),
       activeKeys,
-      totalActiveStreams,
       bitmagnetStatus: { ok: null },
       message: message || adminMessage(req),
     }),
@@ -428,8 +225,6 @@ async function renderKeyAdmin(req, res, key, message = "") {
     renderKeyDetails({
       baseUrl: getBaseUrl(req),
       key,
-      activeStreams: getActiveStreamCount(key.token),
-      activePlaybackHashes: getActivePlaybackHashes(key.token),
       watchHistory: watchHistory.slice(0, historyLimit),
       watchHistoryHasMore: watchHistory.length > historyLimit,
       watchHistoryLimit: historyLimit,
@@ -456,8 +251,6 @@ app.get("/admin/api/keys/:id", requireAdmin, async (req, res) => {
   const watchHistory = db.getWatchHistoryForKey(key.id, historyLimit);
 
   res.json({
-    activeStreams: getActiveStreamCount(key.token),
-    activePlaybackHashes: getActivePlaybackHashes(key.token),
     paused: Boolean(key.paused_at),
     watchHistory,
   });
@@ -467,30 +260,20 @@ app.get("/admin/api/status", requireAdmin, async (req, res) => {
   const activeKeys = db.getActiveKeys()
     .map((key) => ({
       id: key.id,
-      activeStreams: getActiveStreamCount(key.token),
       paused: Boolean(key.paused_at),
       last_active_at: key.last_active_at,
     }))
     .sort((a, b) => {
-      const aActive = a.activeStreams > 0;
-      const bActive = b.activeStreams > 0;
-      if (aActive && !bActive) return -1;
-      if (!aActive && bActive) return 1;
-
-            const aTime = a.last_active_at || "";
+      const aTime = a.last_active_at || "";
       const bTime = b.last_active_at || "";
       if (aTime !== bTime) return bTime < aTime ? -1 : 1;
-
-            return b.id - a.id;
+      return b.id - a.id;
     });
-
-  const totalActiveStreams = activeKeys.reduce((acc, key) => acc + key.activeStreams, 0);
 
   const postgresStats = await getPostgresStats(config);
 
   res.json({
     bitmagnet: await bitmagnet.getStatus(),
-    totalActiveStreams,
     activeKeys,
     postgres: postgresStats,
   });
@@ -961,8 +744,6 @@ app.get("/play/:token", async (req, res) => {
     });
 
     db.updateKeyLastActive(key.id);
-
-    beginTrackedStream(key.token, req.params.token, req, res);
 
     await torrentService.streamSource(payload.stream, req, res);
     console.log(`[play] stream finished infoHash=${JSON.stringify(infoHash)}`);

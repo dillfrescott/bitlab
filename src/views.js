@@ -66,7 +66,6 @@ function layout({ title, body, extraHead = "" }) {
       --danger-ink: #ffffff;
       --success-bg: #000000;
       --success-line: #00ff66;
-      --live: #00ff66;
       --shadow: none;
       --radius: 8px;
       --radius-sm: 4px;
@@ -89,20 +88,6 @@ function layout({ title, body, extraHead = "" }) {
     }
     *::-webkit-scrollbar-thumb:hover {
       background: var(--muted);
-    }
-    @keyframes blink {
-      0%, 100% { opacity: 0.4; }
-      50% { opacity: 1; }
-    }
-    .live-indicator {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      background: var(--live);
-      border-radius: 50%;
-      margin-right: 8px;
-      vertical-align: middle;
-      animation: blink 1.5s infinite ease-in-out;
     }
     .reveal-toggle {
       width: auto;
@@ -689,18 +674,16 @@ function renderLogin(message, nullCaptchaUrl = "") {
   });
 }
 
-function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetStatus, message }) {
+function renderDashboard({ baseUrl, activeKeys, bitmagnetStatus, message }) {
   const activeKeyCards = activeKeys
     .map(
       (key) => `
         <article class="card" data-key-id="${key.id}">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <strong>${escapeHtml(key.name)}</strong>
-            <span data-key-live-indicator>${key.activeStreams > 0 ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
           </div>
           <div class="small">Created ${escapeHtml(key.created_at)}</div>
           <div class="small" style="margin-top: 8px;">Status: <span data-key-status>${key.paused_at ? "Paused" : "Active"}</span></div>
-          <div class="small" style="margin-top: 8px;">Active streams: <span data-key-active-streams>${key.activeStreams}</span></div>
           <div class="reveal-block" style="margin-top: 8px;">
             <button type="button" class="reveal-toggle">Click to Reveal</button>
             <div class="reveal-secret" hidden>
@@ -752,11 +735,6 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
               <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
             </article>
           </a>
-          <article class="stat">
-            <div class="eyebrow">Total Streams</div>
-            <div class="value" data-stat-total-streams>${totalActiveStreams}</div>
-            <div class="small">currently active</div>
-          </article>
           <article class="stat">
             <div class="eyebrow">Keys</div>
             <div class="value">${escapeHtml(activeKeys.length)}</div>
@@ -814,10 +792,6 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
                   : '<span class="chip bad">unreachable</span>';
               }
 
-              // Update total streams
-              const totalVal = document.querySelector("[data-stat-total-streams]");
-              if (totalVal) totalVal.textContent = data.totalActiveStreams;
-
               // Update postgres status
               const pgVal = document.querySelector("[data-stat-postgres-value]");
               const pgSub = document.querySelector("[data-stat-postgres-sub]");
@@ -849,22 +823,8 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
                 const card = document.querySelector(\`[data-key-id="\${key.id}"]\`);
                 if (!card) return;
 
-                const indicator = card.querySelector("[data-key-live-indicator]");
-                if (indicator) {
-                  const hasDot = Boolean(indicator.querySelector(".live-indicator"));
-                  const shouldHaveDot = key.activeStreams > 0;
-                  if (shouldHaveDot && !hasDot) {
-                    indicator.innerHTML = '<span class="live-indicator" title="Active stream"></span>';
-                  } else if (!shouldHaveDot && hasDot) {
-                    indicator.innerHTML = "";
-                  }
-                }
-
                 const status = card.querySelector("[data-key-status]");
                 if (status) status.textContent = key.paused ? "Paused" : "Active";
-
-                const active = card.querySelector("[data-key-active-streams]");
-                if (active) active.textContent = key.activeStreams;
 
                 if (orderChanged && list) {
                   list.appendChild(card);
@@ -889,8 +849,6 @@ function renderDashboard({ baseUrl, activeKeys, totalActiveStreams, bitmagnetSta
 function renderKeyDetails({
   baseUrl,
   key,
-  activeStreams,
-  activePlaybackHashes = [],
   watchHistory,
   watchHistoryHasMore = false,
   watchHistoryLimit = 5,
@@ -906,13 +864,10 @@ function renderKeyDetails({
           ? `S${String(entry.season).padStart(2, "0")}E${String(entry.episode).padStart(2, "0")}`
           : "";
 
-      const isLive = activePlaybackHashes.includes(entry.playback_token_hash);
-
       return `
-        <tr data-history-id="${entry.id}" data-playback-hash="${entry.playback_token_hash}">
+        <tr data-history-id="${entry.id}">
           <td>
             <div style="display: flex; align-items: center;">
-              <span data-live-indicator-container>${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
               <div>
                 <strong>${escapeHtml(entry.media_title)}</strong>
                 <div class="small">${escapeHtml(entry.media_type || "unknown")}${episodeLabel ? ` | ${escapeHtml(episodeLabel)}` : ""}</div>
@@ -953,11 +908,6 @@ function renderKeyDetails({
                 <a class="manifest-link" href="${escapeHtml(baseUrl)}/${escapeHtml(key.token)}/manifest.json" target="_blank">${escapeHtml(baseUrl)}/${escapeHtml(key.token)}/manifest.json</a>
               </div>
             </div>
-          </article>
-          <article class="card">
-            <div class="eyebrow">Current Streams</div>
-            <div class="value" data-key-active-streams>${escapeHtml(activeStreams)}</div>
-            <div class="small">active playback responses right now</div>
           </article>
         </section>
         <section class="main-grid" style="margin-top: 16px;">
@@ -1064,9 +1014,6 @@ function renderKeyDetails({
               if (!res.ok) return;
               const data = await res.json();
 
-              const activeStreams = document.querySelector("[data-key-active-streams]");
-              if (activeStreams) activeStreams.textContent = data.activeStreams;
-
               const statusText = document.querySelector("[data-key-status-text]");
               if (statusText) statusText.textContent = data.paused ? "Paused" : "Active";
 
@@ -1076,7 +1023,6 @@ function renderKeyDetails({
               const watchPlural = document.querySelector("[data-watch-history-plural]");
 
               if (data.watchHistory && data.watchHistory.length > 0) {
-                const activeHashes = data.activePlaybackHashes || [];
                 const existingRows = watchHistoryBody
                   ? Array.from(watchHistoryBody.querySelectorAll("tr[data-history-id]"))
                   : [];
@@ -1086,32 +1032,16 @@ function renderKeyDetails({
                   existingIds.length === incomingIds.length &&
                   existingIds.every((id, idx) => id === incomingIds[idx]);
 
-                if (sameRows && watchHistoryBody) {
-                  existingRows.forEach((row) => {
-                    const hash = row.getAttribute("data-playback-hash");
-                    const container = row.querySelector("[data-live-indicator-container]");
-                    if (!container) return;
-                    const hasDot = Boolean(container.querySelector(".live-indicator"));
-                    const shouldHaveDot = activeHashes.includes(hash);
-                    if (shouldHaveDot && !hasDot) {
-                      container.innerHTML = '<span class="live-indicator" title="Active stream"></span>';
-                    } else if (!shouldHaveDot && hasDot) {
-                      container.innerHTML = "";
-                    }
-                  });
-                } else {
+                if (!sameRows || !watchHistoryBody) {
                   const rows = data.watchHistory.map(entry => {
                     const episodeLabel = (Number.isInteger(entry.season) && Number.isInteger(entry.episode))
                       ? \`S\${String(entry.season).padStart(2, "0")}E\${String(entry.episode).padStart(2, "0")}\`
                       : "";
 
-                    const isLive = activeHashes.includes(entry.playback_token_hash);
-
                     return \`
-                      <tr data-history-id="\${entry.id}" data-playback-hash="\${entry.playback_token_hash}">
+                      <tr data-history-id="\${entry.id}">
                         <td>
                           <div style="display: flex; align-items: center;">
-                            <span data-live-indicator-container>\${isLive ? '<span class="live-indicator" title="Active stream"></span>' : ""}</span>
                             <div>
                               <strong>\${escapeHtml(entry.media_title)}</strong>
                               <div class="small">\${escapeHtml(entry.media_type || "unknown")}\${episodeLabel ? " | " + escapeHtml(episodeLabel) : ""}</div>

@@ -2,13 +2,6 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 
 const dataDir = path.resolve(process.cwd(), "data");
-const defaultStreamTrackerSweepMs = 2000;
-const defaultStreamTrackerIdleMs = 1000 * 5;
-
-function parsePositiveNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function getTimezone() {
   const timezone = process.env.TIMEZONE || "UTC";
@@ -28,14 +21,6 @@ function getConfig() {
     port: Number(process.env.PORT || 7000),
     baseUrl: process.env.BASE_URL || "",
     dataDir,
-    streamTrackerSweepMs: Math.max(
-      1000,
-      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_SWEEP_MS, defaultStreamTrackerSweepMs)),
-    ),
-    streamTrackerIdleMs: Math.max(
-      1000,
-      Math.floor(parsePositiveNumber(process.env.STREAM_TRACKER_IDLE_MS, defaultStreamTrackerIdleMs)),
-    ),
     dbPath: path.join(dataDir, "app.db"),
     adminPassword: process.env.ADMIN_PASSWORD || "change-me-now",
     nullCaptchaUrl: process.env.NULL_CAPTCHA_URL || "",
