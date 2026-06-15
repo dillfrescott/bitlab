@@ -252,6 +252,7 @@ app.get("/admin/api/keys/:id", requireAdmin, async (req, res) => {
 
   res.json({
     paused: Boolean(key.paused_at),
+    paused_at: key.paused_at,
     watchHistory,
   });
 });

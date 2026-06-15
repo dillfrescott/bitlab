@@ -184,7 +184,7 @@ function layout({ title, body, extraHead = "" }) {
       position: relative;
       overflow: hidden;
     }
-    .stat:hover, .card:hover {
+    .card:hover {
       border-color: var(--line-strong);
     }
     .stat, .panel { padding: 24px; }
@@ -728,13 +728,11 @@ function renderDashboard({ baseUrl, activeKeys, bitmagnetStatus, message }) {
         </section>
         ${renderMessage(message)}
         <section class="stats">
-          <a href="/admin/bitmagnet/" style="text-decoration: none; color: inherit;" target="_blank">
-            <article class="stat" style="cursor: pointer;">
-              <div class="eyebrow">Bitmagnet</div>
-              <div class="value" data-stat-bitmagnet-value>${bitmagnetStatus.ok === null ? "Loading…" : bitmagnetStatus.ok ? "Live" : "Down"}</div>
-              <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
-            </article>
-          </a>
+          <article class="stat">
+            <div class="eyebrow">Bitmagnet</div>
+            <div class="value" data-stat-bitmagnet-value>${bitmagnetStatus.ok === null ? "Loading…" : bitmagnetStatus.ok ? "Live" : "Down"}</div>
+            <div class="small" data-stat-bitmagnet-chip>${statusChip}</div>
+          </article>
           <article class="stat">
             <div class="eyebrow">Keys</div>
             <div class="value">${escapeHtml(activeKeys.length)}</div>
@@ -914,7 +912,7 @@ function renderKeyDetails({
           <div class="stack">
             <article class="panel">
               <h2 class="section-title">Access State</h2>
-              <div class="small">Current state: <span data-key-status-text>${key.paused_at ? `Paused since ${escapeHtml(key.paused_at)}` : "Active"}</span></div>
+              <div class="small">Current state: <span data-key-status-text>${key.paused_at ? `Paused since ${escapeHtml(formatTimestamp(key.paused_at))}` : "Active"}</span></div>
               <form method="post" action="/admin/keys/${key.id}/${key.paused_at ? "resume" : "pause"}" style="margin-top: 12px;">
                 <button class="${key.paused_at ? "" : "danger"}" type="submit">${key.paused_at ? "Resume Key" : "Pause Key"}</button>
               </form>
@@ -1015,7 +1013,7 @@ function renderKeyDetails({
               const data = await res.json();
 
               const statusText = document.querySelector("[data-key-status-text]");
-              if (statusText) statusText.textContent = data.paused ? "Paused" : "Active";
+              if (statusText) statusText.textContent = data.paused_at ? \`Paused since \${formatTimestamp(data.paused_at)}\` : data.paused ? "Paused" : "Active";
 
               const watchHistoryBody = document.querySelector("[data-watch-history-body]");
               const watchHistoryContainer = document.querySelector("[data-watch-history-container]");
