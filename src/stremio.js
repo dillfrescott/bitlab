@@ -47,6 +47,9 @@ function mergeMediaObjects(existing, candidate) {
   if (!candidate) return existing;
 
   const mergedReleases = mergeReleaseLists(existing.releases || [], candidate.releases || []);
+  const videos = (Array.isArray(existing.videos) && existing.videos.length > 0)
+    ? existing.videos
+    : (Array.isArray(candidate.videos) ? candidate.videos : []);
 
   return {
     ...existing,
@@ -55,6 +58,7 @@ function mergeMediaObjects(existing, candidate) {
     imdbId: existing.imdbId || candidate.imdbId,
     tmdbId: existing.tmdbId || candidate.tmdbId,
     releases: mergedReleases,
+    videos: videos.length > 0 ? videos : undefined,
   };
 }
 
@@ -258,7 +262,21 @@ function dedupeReleases(releases) {
   return Array.from(deduped.values());
 }
 
-function releaseMatchesEpisodeRequest(release, season, episode) {
+function titleMatches(text, titleToMatch) {
+  if (!text || !titleToMatch) return false;
+  const normText = normalizeKey(text);
+  const normTitle = normalizeKey(titleToMatch);
+  if (!normTitle || normTitle.length < 3) return false;
+
+  return (
+    normText === normTitle ||
+    normText.startsWith(`${normTitle} `) ||
+    normText.endsWith(` ${normTitle}`) ||
+    normText.includes(` ${normTitle} `)
+  );
+}
+
+function releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode = null, episodeTitle = null) {
   if (!Number.isInteger(season) || !Number.isInteger(episode)) {
     return true;
   }
@@ -277,12 +295,27 @@ function releaseMatchesEpisodeRequest(release, season, episode) {
     if (release.episode === episode) {
       return true;
     }
+    if (absoluteEpisode !== null && release.episode === absoluteEpisode) {
+      return true;
+    }
+  }
+
+  if (Number.isInteger(release.season) && Number.isInteger(release.episode) && absoluteEpisode !== null) {
+    if ((release.season === season || release.season === 1) && release.episode === absoluteEpisode) {
+      return true;
+    }
+  }
+
+  if (episodeTitle && typeof episodeTitle === "string") {
+    if (titleMatches(release.releaseName, episodeTitle) || titleMatches(release.fileName, episodeTitle)) {
+      return true;
+    }
   }
 
   return false;
 }
 
-function buildEpisodeSearchQueries(title, season, episode) {
+function buildEpisodeSearchQueries(title, season, episode, absoluteEpisode = null, episodeTitle = null) {
   const paddedSeason = String(season).padStart(2, "0");
   const paddedEpisode = String(episode).padStart(2, "0");
   const baseTitles = Array.from(new Set(
@@ -304,6 +337,21 @@ function buildEpisodeSearchQueries(title, season, episode) {
     `Season ${paddedSeason}`,
     `Season ${season}`,
   ];
+
+  if (absoluteEpisode !== null) {
+    const paddedAbsolute = String(absoluteEpisode).padStart(2, "0");
+    episodeTokens.push(`S${paddedSeason}E${paddedAbsolute}`);
+    episodeTokens.push(`E${paddedAbsolute}`);
+    episodeTokens.push(`Episode ${paddedAbsolute}`);
+    episodeTokens.push(String(absoluteEpisode));
+  }
+
+  if (episodeTitle && typeof episodeTitle === "string") {
+    const cleanedEpisodeTitle = episodeTitle.replace(/[:'".,!?()[\]{}_-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (cleanedEpisodeTitle.length > 2) {
+      episodeTokens.push(cleanedEpisodeTitle);
+    }
+  }
 
   const queries = [];
   for (const baseTitle of baseTitles) {
@@ -385,6 +433,21 @@ function extractMetadataYear(meta) {
   return null;
 }
 
+function getAbsoluteEpisodeNumber(videos, season, episode) {
+  if (!Array.isArray(videos) || !Number.isInteger(season) || !Number.isInteger(episode)) {
+    return null;
+  }
+  const regularVideos = videos
+    .filter((v) => Number.isInteger(v.season) && v.season > 0 && Number.isInteger(v.episode))
+    .sort((a, b) => a.season - b.season || a.episode - b.episode);
+
+  const index = regularVideos.findIndex((v) => v.season === season && v.episode === episode);
+  if (index === -1) {
+    return null;
+  }
+  return index + 1;
+}
+
 async function fetchCinemetaFallback(type, id) {
   const url = `${CINEMETA_BASE_URL}/meta/${type}/${encodeURIComponent(String(id || ""))}.json`;
 
@@ -412,6 +475,7 @@ async function fetchCinemetaFallback(type, id) {
       year: extractMetadataYear(meta),
       poster: typeof meta?.poster === "string" ? meta.poster : null,
       background: typeof meta?.background === "string" ? meta.background : null,
+      videos: Array.isArray(meta?.videos) ? meta.videos : [],
     };
   } catch (error) {
     console.log(`[addon] cinemeta fallback failed type=${type} id=${JSON.stringify(id)} error=${JSON.stringify(error.message)}`);
@@ -497,13 +561,21 @@ async function findTitleFallbackMedia(bitmagnet, type, id, options = {}) {
     console.log(
       `[addon] external-id title fallback type=${type} id=${JSON.stringify(id)} query=${JSON.stringify(metadata.title)} groups=${fallbackMatches.length} matched=${JSON.stringify(fallbackMedia.title)} releases=${fallbackMedia.releases.length}`,
     );
-    return fallbackMedia;
+    return {
+      ...fallbackMedia,
+      videos: metadata.videos,
+    };
   }
 
   console.log(
     `[addon] external-id title fallback miss type=${type} id=${JSON.stringify(id)} query=${JSON.stringify(metadata.title)} results=${searchResults.length}`,
   );
-  return null;
+  return {
+    title: metadata.title,
+    year: metadata.year,
+    releases: [],
+    videos: metadata.videos,
+  };
 }
 
 function chooseSearchFallback(items, metadata) {
@@ -609,9 +681,13 @@ function mergeFallbackMedia(items, options = {}) {
   });
 
   const releases = [];
+  let videos = [];
   for (const group of groups) {
     for (const release of group.releases || []) {
       releases.push(release);
+    }
+    if (Array.isArray(group.videos) && group.videos.length > videos.length) {
+      videos = group.videos;
     }
   }
 
@@ -623,6 +699,7 @@ function mergeFallbackMedia(items, options = {}) {
   return {
     ...primary,
     releases: mergedReleases,
+    videos: videos.length > 0 ? videos : undefined,
   };
 }
 
@@ -637,9 +714,13 @@ function mergeMediaCollections(items) {
   });
 
   const releases = [];
+  let videos = [];
   for (const group of groups) {
     for (const release of group.releases || []) {
       releases.push(release);
+    }
+    if (Array.isArray(group.videos) && group.videos.length > videos.length) {
+      videos = group.videos;
     }
   }
 
@@ -651,6 +732,7 @@ function mergeMediaCollections(items) {
   return {
     ...primary,
     releases: mergedReleases,
+    videos: videos.length > 0 ? videos : undefined,
   };
 }
 
@@ -683,7 +765,12 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
   }
 
   const mediaTitleKey = normalizeKey(media.title);
-  const queries = buildEpisodeSearchQueries(media.title, season, episode);
+  const videos = Array.isArray(media.videos) ? media.videos : [];
+  const absoluteEpisode = getAbsoluteEpisodeNumber(videos, season, episode);
+  const targetVideo = videos.find((v) => v.season === season && v.episode === episode);
+  const episodeTitle = targetVideo ? targetVideo.name : null;
+
+  const queries = buildEpisodeSearchQueries(media.title, season, episode, absoluteEpisode, episodeTitle);
   if (media.imdbId) {
     queries.push(`tt${String(media.imdbId).replace(/^tt/i, "")}`);
   }
@@ -716,7 +803,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
     const filteredGroups = titleRelevantGroups
       .map((group) => {
         const matchingReleases = (group.releases || []).filter((release) =>
-          releaseMatchesEpisodeRequest(release, season, episode) ||
+          releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle) ||
           (release.season === season && !Number.isInteger(release.episode))
         );
         return {
@@ -736,7 +823,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
 
     mergedMedia = mergeMediaCollections([mergedMedia || media, ...filteredGroups]);
 
-    if (mergedMedia?.releases?.some((release) => releaseMatchesEpisodeRequest(release, season, episode))) {
+    if (mergedMedia?.releases?.some((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))) {
       foundExactMatch = true;
       break;
     }
@@ -1167,13 +1254,18 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     );
     let attemptedExpansion = false;
 
+    const videos = Array.isArray(media.videos) ? media.videos : [];
+    const absoluteEpisode = getAbsoluteEpisodeNumber(videos, season, episode);
+    const targetVideo = videos.find((v) => v.season === season && v.episode === episode);
+    const episodeTitle = targetVideo ? targetVideo.name : null;
+
     let releases = (Array.isArray(media.releases) ? media.releases : [])
       .filter((release) => {
         if (releaseId) {
           return release.id === releaseId;
         }
         if (args.type === "series" && Number.isInteger(season) && Number.isInteger(episode)) {
-          return releaseMatchesEpisodeRequest(release, season, episode);
+          return releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle);
         }
         return true;
       })
@@ -1181,9 +1273,9 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
 
     if (args.type === "series") {
       if (Number.isInteger(season) && Number.isInteger(episode)) {
-        if (releases.length === 0) {
+        if (releases.length < 5) {
           console.log(
-            `[addon] stream no direct series matches title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} trying search fallback`,
+            `[addon] stream few direct series matches title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} trying search fallback`,
           );
           const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
             keyToken: args.config.keyToken,
@@ -1192,7 +1284,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
             media = fallbackMedia;
             cacheMediaAliases(mediaCache, media);
             releases = media.releases
-              .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+              .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
               .filter(hasDisplayableSeeders);
           }
         }
@@ -1204,13 +1296,13 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           );
           media = await seriesExpansions.ensureExpanded(media, { season, episode });
           releases = media.releases
-            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
             .filter(hasDisplayableSeeders);
         }
 
         if (releases.length === 0) {
           releases = media.releases
-            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
             .filter((r) => hasDisplayableSeeders(r, { lenient: true }));
           if (releases.length > 0) {
             console.log(`[addon] series stream match title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} using lenient seeder filter count=${releases.length}`);
@@ -1225,7 +1317,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
             releases = mergeReleaseLists(
               releases,
               media.releases
-                .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+                .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
                 .filter(hasDisplayableSeeders),
             ).filter(hasDisplayableSeeders);
           }
@@ -1253,7 +1345,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           mergeReleaseLists(
             releases,
             media.releases
-              .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+              .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
               .filter(hasDisplayableSeeders),
           ),
         );
@@ -1264,7 +1356,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       args.type === "series" &&
       Number.isInteger(season) &&
       Number.isInteger(episode) &&
-      releases.length === 0
+      releases.length < 5
     ) {
       const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
         keyToken: args.config.keyToken,
@@ -1274,7 +1366,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
         cacheMediaAliases(mediaCache, media);
         releases = sortReleases(
           media.releases
-            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode))
+            .filter((release) => releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle))
             .filter(hasDisplayableSeeders),
         );
       }

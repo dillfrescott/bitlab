@@ -744,7 +744,7 @@ function createBitmagnetService(config) {
       return null;
     }
 
-    const lookupLimit = 100;
+    const lookupLimit = 1000;
 
     const [torznabItems, graphqlItems] = await Promise.all([
       (async () => {
