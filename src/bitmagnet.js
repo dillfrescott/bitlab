@@ -251,10 +251,10 @@ async function parseGraphqlReleases(type, payload) {
     for (const item of items) {
       const title = String(item?.title || "").trim();
       const magnetUri = String(item?.torrent?.magnetUri || "").trim();
-      const infoHash = parseMagnetInfoHash(magnetUri);
-      if (!title || !magnetUri) continue;
+      const infoHash = String(item?.infoHash || "").toLowerCase() || parseMagnetInfoHash(magnetUri);
+      if (!title || (!magnetUri && !infoHash)) continue;
 
-      const seeders = Number(item?.torrent?.seeders || 0);
+      const seeders = Number(item?.seeders ?? item?.torrent?.seeders ?? 0);
       if (seeders <= 0 && !infoHash) continue;
 
       const torrentFiles = Array.isArray(item?.torrent?.files) ? item.torrent.files : [];
@@ -328,9 +328,7 @@ async function parseGraphqlReleases(type, payload) {
           }
         }
       } else {
-        const fallbackEp = (titleEp?.season != null || titleEp?.episode != null)
-          ? titleEp
-          : (torrentNameEp || null);
+        const fallbackEp = torrentNameEp || (titleEp?.season != null || titleEp?.episode != null ? titleEp : null);
         releases.push({
           title,
           magnetUri,
@@ -349,9 +347,9 @@ async function parseGraphqlReleases(type, payload) {
     for (const item of items) {
       const title = String(item?.title || "").trim();
       const magnetUri = String(item?.torrent?.magnetUri || "").trim();
-      const infoHash = parseMagnetInfoHash(magnetUri);
-      if (!title || !magnetUri) continue;
-      const seeders = Number(item?.torrent?.seeders || 0);
+      const infoHash = String(item?.infoHash || "").toLowerCase() || parseMagnetInfoHash(magnetUri);
+      if (!title || (!magnetUri && !infoHash)) continue;
+      const seeders = Number(item?.seeders ?? item?.torrent?.seeders ?? 0);
       if (seeders <= 0 && !infoHash) continue;
 
       const torrentFiles = Array.isArray(item?.torrent?.files) ? item.torrent.files : [];
@@ -469,7 +467,7 @@ async function groupGraphqlResults(type, items, options = {}) {
           return leftSeason - rightSeason || leftEpisode - rightEpisode || right.seeders - left.seeders;
         }
         return right.seeders - left.seeders || right.sizeBytes - left.sizeBytes;
-      }).slice(0, options.retainAllReleases ? Infinity : 24),
+      }).slice(0, options.retainAllReleases ? Infinity : 48),
     }))
     .sort((left, right) => right.releases.length - left.releases.length || left.title.localeCompare(right.title));
 }
@@ -626,7 +624,7 @@ async function groupResults(type, items, options = {}) {
           }
           return right.seeders - left.seeders || right.sizeBytes - left.sizeBytes;
         })
-        .slice(0, options.retainAllReleases ? Infinity : 12),
+        .slice(0, options.retainAllReleases ? Infinity : 24),
     }))
     .sort((left, right) => right.releases.length - left.releases.length || left.title.localeCompare(right.title));
 }
@@ -637,6 +635,8 @@ function createBitmagnetService(config) {
       torrentContent {
         search(input: $input) {
           items {
+            infoHash
+            seeders
             title
             content {
               source
@@ -695,11 +695,11 @@ function createBitmagnetService(config) {
   function buildTorznabUrl(type, query, limit, externalIds = {}) {
     const url = buildBitmagnetUrl(config.bitmagnetTorznabPath);
     url.searchParams.set("limit", String(limit));
-    url.searchParams.set("cat", (TORZNAB_CATEGORIES[type] || []).join(","));
 
     const hasExternalIds = Boolean(externalIds.imdbId || externalIds.tmdbId);
     if (hasExternalIds) {
       url.searchParams.set("t", type === "series" ? "tvsearch" : "movie");
+      url.searchParams.set("cat", (TORZNAB_CATEGORIES[type] || []).join(","));
     } else {
       url.searchParams.set("t", "search");
     }
@@ -841,7 +841,6 @@ function createBitmagnetService(config) {
       return [];
     }
 
-    const contentType = type === "series" ? "tv_show" : "movie";
     const response = await fetchWithTimeout(buildBitmagnetUrl("/graphql"), {
       method: "POST",
       headers: {
@@ -856,11 +855,6 @@ function createBitmagnetService(config) {
             limit,
             offset: 0,
             cached: true,
-            facets: {
-              contentType: {
-                filter: [contentType],
-              },
-            },
             orderBy: [
               { field: "seeders", descending: true },
             ],
@@ -879,7 +873,10 @@ function createBitmagnetService(config) {
       throw new Error(`Bitmagnet GraphQL search failed: ${errors.join(", ")}`);
     }
 
-    const grouped = await groupGraphqlResults(type, await parseGraphqlReleases(type, payload), options);
+    const releases = await parseGraphqlReleases(type, payload);
+    const topHashes = releases.slice(0, 20).map((r) => ({ infoHash: r.infoHash, title: r.title, season: r.season, episode: r.episode, seeders: r.seeders }));
+    console.log(`[bitmagnet] graphql search query=${JSON.stringify(trimmed)} total=${releases.length} top=${JSON.stringify(topHashes)}`);
+    const grouped = await groupGraphqlResults(type, releases, options);
     return (await curateSearchResults(type, trimmed, grouped)).slice(0, limit);
   }
 

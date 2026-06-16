@@ -208,6 +208,10 @@ function hasDisplayableSeeders(release, options = {}) {
   return seeders >= 1;
 }
 
+function maxSeeders(releases) {
+  return releases.reduce((max, r) => Math.max(max, Number.isFinite(r?.seeders) ? r.seeders : 0), 0);
+}
+
 
 function getReleaseIdentityKey(release) {
   const rawId = release.infoHash || release.magnetUri || release.releaseName || "";
@@ -509,6 +513,7 @@ async function runFallbackSearch(bitmagnet, type, query, options = {}) {
   }
 
   const limit = Math.max(1, Number(options.limit || 20));
+  const fetchLimit = Math.max(limit, 100);
   const keyToken = options.keyToken || "_global";
   const watchHistory = Array.isArray(options.watchHistory) ? options.watchHistory : [];
   const searches = await Promise.allSettled([
@@ -517,25 +522,30 @@ async function runFallbackSearch(bitmagnet, type, query, options = {}) {
       keyToken,
       watchHistory,
       limit,
-      fetchLimit: Math.min(Math.max(limit * 2, 12), 24),
+      fetchLimit,
       roundsLimit: Math.max(1, Number(options.roundsLimit || 2)),
       perRound: Math.max(1, Number(options.perRound || 3)),
       queryLimit: Math.max(1, Number(options.queryLimit || 6)),
     }),
     typeof bitmagnet.searchWithFiles === "function"
-      ? bitmagnet.searchWithFiles(type, trimmed, limit)
+      ? bitmagnet.searchWithFiles(type, trimmed, fetchLimit)
       : Promise.resolve([]),
   ]);
 
   const merged = [];
   const orchestrated = searches[0];
-  if (orchestrated?.status === "fulfilled" && Array.isArray(orchestrated.value?.items)) {
-    merged.push(...orchestrated.value.items);
+  const orchestratedResults = orchestrated?.status === "fulfilled" ? orchestrated.value?.items : [];
+  if (Array.isArray(orchestratedResults)) {
+    merged.push(...orchestratedResults);
   }
   const withFiles = searches[1];
-  if (withFiles?.status === "fulfilled" && Array.isArray(withFiles.value)) {
-    merged.push(...withFiles.value);
+  const withFilesResults = withFiles?.status === "fulfilled" ? withFiles.value : [];
+  if (Array.isArray(withFilesResults)) {
+    merged.push(...withFilesResults);
   }
+  console.log(
+    `[addon] fallback search query=${JSON.stringify(trimmed)} orchestrated=${orchestratedResults?.length || 0} groups withFiles=${withFilesResults?.length || 0} groups merged=${merged.length} groups`,
+  );
   return dedupeMediaGroups(merged);
 }
 
@@ -1272,9 +1282,10 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
 
     if (args.type === "series") {
       if (Number.isInteger(season) && Number.isInteger(episode)) {
-        if (releases.length < 5) {
+        const lowSeeders = maxSeeders(releases) < 3;
+        if (releases.length < 5 || lowSeeders) {
           console.log(
-            `[addon] stream few direct series matches title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} trying search fallback`,
+            `[addon] stream few direct series matches title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} direct=${releases.length} maxSeeders=${maxSeeders(releases)} trying search fallback`,
           );
           const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
             keyToken: args.config.keyToken,
@@ -1288,10 +1299,11 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
           }
         }
 
-        if (releases.length === 0) {
+        const shouldExpandSeasonPacks = releases.length <= 1 || (getPendingSeriesPackCount(media) > 0 && maxSeeders(releases) < 3);
+        if (releases.length === 0 || (shouldExpandSeasonPacks && !attemptedExpansion)) {
           attemptedExpansion = true;
           console.log(
-            `[addon] stream attempting series expansion title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`,
+            `[addon] stream attempting series expansion title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} direct=${releases.length} maxSeeders=${maxSeeders(releases)}`,
           );
           media = await seriesExpansions.ensureExpanded(media, { season, episode });
           releases = media.releases
@@ -1355,7 +1367,7 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       args.type === "series" &&
       Number.isInteger(season) &&
       Number.isInteger(episode) &&
-      releases.length < 5
+      (releases.length < 5 || maxSeeders(releases) < 3)
     ) {
       const fallbackMedia = await searchEpisodeFallback(bitmagnet, media, season, episode, {
         keyToken: args.config.keyToken,
