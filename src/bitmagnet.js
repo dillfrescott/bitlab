@@ -328,6 +328,9 @@ async function parseGraphqlReleases(type, payload) {
           }
         }
       } else {
+        const fallbackEp = (titleEp?.season != null || titleEp?.episode != null)
+          ? titleEp
+          : (torrentNameEp || null);
         releases.push({
           title,
           magnetUri,
@@ -335,8 +338,8 @@ async function parseGraphqlReleases(type, payload) {
           sizeBytes: fallbackSize,
           seeders,
           releaseName: String(item?.torrent?.name || title).trim(),
-          season: titleEp.season,
-          episode: titleEp.episode,
+          season: fallbackEp?.season ?? null,
+          episode: fallbackEp?.episode ?? null,
           imdbId,
           tmdbId,
         });
