@@ -291,6 +291,9 @@ function releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode 
     }
   }
 
+  // Season pack with no episode: a legitimate match only when the season
+  // itself lines up. The pack will still need to be expanded to pick the
+  // right file at playback time.
   if (Number.isInteger(release.season) && release.season === season && !Number.isInteger(release.episode)) {
     return true;
   }
@@ -305,12 +308,21 @@ function releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode 
   }
 
   if (Number.isInteger(release.season) && Number.isInteger(release.episode) && absoluteEpisode !== null) {
-    if ((release.season === season || release.season === 1) && release.episode === absoluteEpisode) {
+    if (release.season === season && release.episode === absoluteEpisode) {
       return true;
     }
   }
 
-  if (episodeTitle && typeof episodeTitle === "string") {
+  // Episode-title matching is a last resort and is intentionally strict: the
+  // release must ALSO have an episodic season/episode marker that anchors it
+  // to the requested season. Otherwise an episode title that happens to be a
+  // common word ("Pilot", "Finale") could pull in the wrong series entirely.
+  if (
+    episodeTitle &&
+    typeof episodeTitle === "string" &&
+    Number.isInteger(release.season) &&
+    release.season === season
+  ) {
     if (titleMatches(release.releaseName, episodeTitle) || titleMatches(release.fileName, episodeTitle)) {
       return true;
     }
@@ -775,6 +787,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
   }
 
   const mediaTitleKey = normalizeKey(media.title);
+  const mediaYear = Number.isInteger(media.year) ? media.year : null;
   const videos = Array.isArray(media.videos) ? media.videos : [];
   const absoluteEpisode = getAbsoluteEpisodeNumber(videos, season, episode);
   const targetVideo = videos.find((v) => v.season === season && v.episode === episode);
@@ -810,12 +823,32 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
       return matchingTokens.length >= 2;
     });
 
-    const filteredGroups = titleRelevantGroups
+    // Reject groups whose year is more than one away from the requested
+    // media's year. Episode packs commonly reuse the series title across
+    // different releases/seasons; without a year gate the fallback could
+    // silently substitute episodes from a different show with the same name.
+    const yearFilteredGroups = titleRelevantGroups.filter((group) => {
+      if (!mediaYear) return true;
+      const groupYear = Number.isInteger(group?.year) ? group.year : null;
+      if (!groupYear) return true;
+      return Math.abs(mediaYear - groupYear) <= 1;
+    });
+
+    const filteredGroups = yearFilteredGroups
       .map((group) => {
-        const matchingReleases = (group.releases || []).filter((release) =>
-          releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle) ||
-          (release.season === season && !Number.isInteger(release.episode))
-        );
+        const matchingReleases = (group.releases || []).filter((release) => {
+          // Require any release we accept to carry a season marker we can
+          // verify against the requested season. A season-less, episode-only
+          // release pulled in by a generic title search is exactly the kind
+          // of weak signal that produces wrong-episode playback.
+          if (!Number.isInteger(release.season)) {
+            return false;
+          }
+          if (release.season !== season) {
+            return false;
+          }
+          return releaseMatchesEpisodeRequest(release, season, episode, absoluteEpisode, episodeTitle);
+        });
         return {
           ...group,
           releases: matchingReleases,
@@ -824,7 +857,7 @@ async function searchEpisodeFallback(bitmagnet, media, season, episode, options 
       .filter((group) => group.releases.length > 0);
 
     console.log(
-      `[addon] episode fallback search title=${JSON.stringify(media.title)} query=${JSON.stringify(query)} titleMatch=${titleRelevantGroups.length} filtered=${filteredGroups.length}`,
+      `[addon] episode fallback search title=${JSON.stringify(media.title)} query=${JSON.stringify(query)} titleMatch=${titleRelevantGroups.length} yearFiltered=${yearFilteredGroups.length} filtered=${filteredGroups.length}`,
     );
 
     if (filteredGroups.length === 0) {
@@ -1196,6 +1229,54 @@ function createSeriesExpansionManager(cache, torrentService) {
   };
 }
 
+// Pre-warm TorrServer with the most likely-to-be-played releases for a media
+// item. This is fire-and-forget; the goal is that by the time the user clicks
+// "Play" in Stremio, TorrServer already has the torrent's metadata cached and
+// the /play handler can return the stream URL on its very first poll — making
+// the seeders the only remaining bottleneck.
+function warmTopReleases(media, torrentService, options = {}) {
+  if (!media || !torrentService || typeof torrentService.warmMagnet !== "function") {
+    return;
+  }
+
+  const targetSeason = Number.isInteger(options.season) ? options.season : null;
+  const targetEpisode = Number.isInteger(options.episode) ? options.episode : null;
+
+  let candidates = Array.isArray(media.releases) ? media.releases.slice() : [];
+
+  if (targetSeason !== null && targetEpisode !== null) {
+    const direct = candidates.filter(
+      (release) => Number.isInteger(release.season) && release.season === targetSeason
+        && Number.isInteger(release.episode) && release.episode === targetEpisode,
+    );
+    const seasonPacks = candidates.filter(
+      (release) => Number.isInteger(release.season) && release.season === targetSeason && !Number.isInteger(release.episode),
+    );
+    candidates = [...direct, ...seasonPacks];
+  } else if (targetSeason !== null) {
+    candidates = candidates.filter(
+      (release) => Number.isInteger(release.season) && release.season === targetSeason,
+    );
+  }
+
+  // Prefer high-seeder, high-resolution releases; those are what the user is
+  // most likely to pick and benefit most from being warm.
+  candidates = sortReleases(candidates).filter((release) => release.magnetUri || release.infoHash);
+
+  const warmedInfoHashes = new Set();
+  const limit = Math.min(3, candidates.length);
+  for (let index = 0; index < limit; index += 1) {
+    const release = candidates[index];
+    if (!release) continue;
+    const magnetUri = release.magnetUri || (release.infoHash ? `magnet:?xt=urn:btih:${release.infoHash}` : null);
+    if (!magnetUri) continue;
+    const key = String(release.infoHash || magnetUri).toLowerCase();
+    if (warmedInfoHashes.has(key)) continue;
+    warmedInfoHashes.add(key);
+    torrentService.warmMagnet(magnetUri, { timeoutMs: 12000 }).catch(() => {});
+  }
+}
+
 async function refreshMedia(bitmagnet, cache, pendingCache, media, type, options = {}) {
   invalidateCachedMedia(cache, media);
   const refreshId =
@@ -1242,6 +1323,11 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     }
     const externalIds = parseExternalIds(args.id);
     seriesExpansions.warm(media);
+    // Speculatively warm TorrServer with the top releases so the eventual
+    // /play request can skip metadata resolution. For series we don't know
+    // which episode the user will pick yet, so warm the highest-seeded
+    // episodes/packs overall.
+    warmTopReleases(media, torrentService);
     return { meta: toMeta(media) };
   });
 
@@ -1261,6 +1347,17 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
     console.log(
       `[addon] stream media loaded type=${args.type} title=${JSON.stringify(media.title)} releases=${media.releases.length}`,
     );
+
+    // Kick off warming as early as possible. The rest of the handler does
+    // expansion / fallback work that takes wall-clock time; warming in
+    // parallel means TorrServer is already fetching the torrent while we're
+    // still deciding which releases to show.
+    if (args.type === "series" && Number.isInteger(season) && Number.isInteger(episode)) {
+      warmTopReleases(media, torrentService, { season, episode });
+    } else {
+      warmTopReleases(media, torrentService);
+    }
+
     let attemptedExpansion = false;
 
     const videos = Array.isArray(media.videos) ? media.videos : [];
@@ -1387,6 +1484,15 @@ function createAddonInterface({ db, config, bitmagnet, torrentService }) {
       console.log(
         `[addon] series stream match title=${JSON.stringify(media.title)} request=S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} matched=${releases.length} totalReleases=${media.releases.length}`,
       );
+    }
+
+    // Warm the final, filtered release set. This is the list the user will
+    // actually choose from, so make sure those magnets are live in
+    // TorrServer before we hand the streams back to Stremio.
+    if (args.type === "series" && Number.isInteger(season) && Number.isInteger(episode)) {
+      warmTopReleases({ ...media, releases }, torrentService, { season, episode });
+    } else {
+      warmTopReleases({ ...media, releases }, torrentService);
     }
 
     const streams = releases.flatMap((release) => {

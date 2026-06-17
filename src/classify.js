@@ -119,6 +119,28 @@ function buildTitleSearchAliases(rawTitle) {
   const normalizedWhitespace = original.replace(/\s+/g, " ").trim();
   aliases.add(normalizedWhitespace);
 
+  // Punctuation-stripped variant (e.g. "S.H.I.E.L.D." -> "SHIELD").
+  const noPunct = original.replace(/[._:\-]/g, " ").replace(/\s+/g, " ").trim();
+  if (noPunct && noPunct !== original) {
+    aliases.add(noPunct);
+  }
+
+  // "&" / "and" interchangeability ("Law & Order" <-> "Law and Order").
+  if (/\s&\s/.test(original)) {
+    aliases.add(original.replace(/\s&\s/g, " and "));
+  }
+  if (/\s+and\s+/i.test(original)) {
+    aliases.add(original.replace(/\s+and\s+/gi, " & "));
+  }
+
+  // Leading-article-stripped variant ("The Walking Dead" -> "Walking Dead").
+  // Indexers frequently index without leading articles, so including both
+  // forms meaningfully improves recall for short titles.
+  const articleStripped = original.replace(/^(?:the|a|an)\s+/i, "").trim();
+  if (articleStripped && articleStripped !== original) {
+    aliases.add(articleStripped);
+  }
+
   return Array.from(aliases)
     .map((value) => value.trim())
     .filter(Boolean);
