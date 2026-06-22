@@ -96,6 +96,7 @@ services:
     network_mode: "service:gluetun"
     volumes:
       - ./data/torrserver:/opt/ts
+      - ./config/torrserver/settings.json:/opt/ts/config/settings.json:ro
     environment:
       - TS_PORT=8090
       - TS_DONTKILL=1
