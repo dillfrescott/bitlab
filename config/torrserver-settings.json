@@ -1,7 +1,7 @@
 {
   "BitTorr": {
-    "CacheSize": 134217728,
-    "ConnectionsLimit": 500,
+    "CacheSize": 1073741824,
+    "ConnectionsLimit": 1000,
     "DisableDHT": false,
     "DisablePEX": false,
     "DisableTCP": false,
@@ -38,7 +38,7 @@
       "ImageURL": "https://image.tmdb.org",
       "ImageURLRu": "https://imagetmdb.com"
     },
-    "TorrentDisconnectTimeout": 60,
+    "TorrentDisconnectTimeout": 300,
     "TorrentsSavePath": "",
     "TorznabUrls": null,
     "UploadRateLimit": 0,
