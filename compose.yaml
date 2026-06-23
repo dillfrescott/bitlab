@@ -41,7 +41,7 @@ services:
       - POSTGRES_USER=postgres
     volumes:
       - ./data/frontend:/app/data
-      - /mnt/drive:/postgres_volume:ro
+      - /mnt/HC_Volume_106114313/postgres:/postgres_volume:ro
     depends_on:
       gluetun:
         condition: service_healthy
@@ -75,7 +75,7 @@ services:
     image: postgres:18-alpine
     container_name: bitmagnet-postgres
     volumes:
-      - /mnt/drive/postgres:/var/lib/postgresql
+      - /mnt/HC_Volume_106114313/postgres:/var/lib/postgresql
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
