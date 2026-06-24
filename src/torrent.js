@@ -41,20 +41,36 @@ function extractInfoHash(magnetUri) {
 // from the torrent name. This deliberately rejects weak "episode-only" hits
 // when the torrent name provides a conflicting season, which keeps users from
 // being served the wrong episode from a multi-season pack.
+//
+// Importantly: when a season/episode is requested but NO file matches, we
+// return null rather than falling back to "the largest video file". The
+// largest-file fallback is fine for movies/unknown content, but for a targeted
+// episode request it is exactly what serves a user S02E24 when they asked for
+// S01E02 (the finale is usually the biggest file in a multi-season pack). We
+// would rather give the user a 404 than the wrong episode.
 function chooseFile(torrent, preferredIndex, season, episode) {
   const videoFiles = torrent.files.filter((file) =>
     VIDEO_EXTENSIONS.has(path.extname(file.name).toLowerCase()),
   );
 
-  if (videoFiles.length > 0 && Number.isInteger(season) && Number.isInteger(episode)) {
+  const targetedRequest =
+    videoFiles.length > 0 && Number.isInteger(season) && Number.isInteger(episode);
+
+  if (targetedRequest) {
     const torrentName = String(torrent.name || "");
     const torrentSeasonParts = extractEpisodeParts(torrentName);
     const torrentNameHasSeason = Number.isInteger(torrentSeasonParts?.season);
     const torrentNameSeason = torrentNameHasSeason ? torrentSeasonParts.season : null;
 
-    // Strong match first: file explicitly encodes season AND episode that match.
+    // Strong match first: file explicitly encodes season AND episode that
+    // match. Parse the file name ON ITS OWN — concatenating the torrent name
+    // with the file name lets a torrent-level season marker contaminate a
+    // file that encodes a different season (e.g. a "S01" pack name followed
+    // by an "S02E24" file would previously match S01E24 via the combined
+    // string), and conversely lets a file-level season override a torrent name
+    // that should be anchoring a season-less file.
     const strongMatch = videoFiles.find((file) => {
-      const parts = extractEpisodeParts(`${torrentName} ${file.name}`);
+      const parts = extractEpisodeParts(file.name);
       if (!parts) return false;
       return parts.season === season && parts.episode === episode;
     });
@@ -68,7 +84,7 @@ function chooseFile(torrent, preferredIndex, season, episode) {
     // otherwise a multi-season pack would happily return S01E05 when the user
     // asked for S02E05.
     const fileOnlyMatch = videoFiles.find((file) => {
-      const parts = extractEpisodeParts(`${torrentName} ${file.name}`);
+      const parts = extractEpisodeParts(file.name);
       if (!parts) return false;
       if (Number.isInteger(parts.season) && parts.season !== season) {
         return false;
@@ -87,6 +103,12 @@ function chooseFile(torrent, preferredIndex, season, episode) {
     if (fileOnlyMatch) {
       return fileOnlyMatch;
     }
+
+    // Targeted episode request with no matching file. Do NOT fall through to
+    // the size-based fallback — that is the mechanism behind "asked for
+    // S01E02, got S02E24". Surface a 404 so the user tries another release
+    // instead of watching the wrong episode.
+    return null;
   }
 
   if (Number.isInteger(preferredIndex) && torrent.files[preferredIndex]) {
