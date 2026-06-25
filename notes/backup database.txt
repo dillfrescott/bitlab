@@ -1,1 +1,1 @@
-docker exec -t bitmagnet-postgres pg_dump -U postgres bitmagnet > /root/database.sql
+docker exec -t bitmagnet-postgres pg_dump -U postgres bitmagnet | gzip > /root/database.sql.gz
