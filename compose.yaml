@@ -7,8 +7,7 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "7000:7000"
-      - "8090:8090"
+      - "127.0.0.1:7000:7000"
     environment:
       - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-custom}
       - VPN_TYPE=${VPN_TYPE:-wireguard}
@@ -41,7 +40,7 @@ services:
       - POSTGRES_USER=postgres
     volumes:
       - ./data/frontend:/app/data
-      - /mnt/HC_Volume_106114313/postgres:/postgres_volume:ro
+      - /mnt/drive/postgres:/postgres_volume:ro
     depends_on:
       gluetun:
         condition: service_healthy
@@ -75,7 +74,7 @@ services:
     image: postgres:18-alpine
     container_name: bitmagnet-postgres
     volumes:
-      - /mnt/HC_Volume_106114313/postgres:/var/lib/postgresql
+      - /mnt/drive/postgres:/var/lib/postgresql
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
