@@ -353,10 +353,86 @@ function createTorrentService(config) {
       userAgent: req.headers["user-agent"] || "",
     });
 
+    // Larger read/write buffers for the proxied sockets. The Node defaults
+    // (16KB) throttle throughput between the TorrServer swarm and the client
+    // on fast networks; 256KB lets the OS absorb bursty peer piece data
+    // without backpressure-stalling the response between reads.
+    const PROXY_HIGH_WATER_MARK = 256 * 1024;
+
+    function startProxy(targetPath, label) {
+      const parsedUrl = new URL(targetPath, config.torrserverUrl);
+      const proxyReq = http.request({
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 80,
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: req.method,
+        headers: {
+          ...req.headers,
+          host: parsedUrl.host,
+        },
+        highWaterMark: PROXY_HIGH_WATER_MARK,
+      }, (proxyRes) => {
+        if (proxyRes.socket) {
+          proxyRes.socket.setNoDelay(true);
+          proxyRes.socket.setTimeout(0);
+        }
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res, { end: true });
+      });
+
+      proxyReq.on("socket", (socket) => {
+        socket.setNoDelay(true);
+        socket.setTimeout(0);
+      });
+
+      proxyReq.on("error", (error) => {
+        log("proxy stream error", { infoHash: infoHash || label, error: error.message });
+        if (!res.headersSent) {
+          res.status(500).send("Streaming failed.");
+        } else if (!res.destroyed) {
+          res.destroy(error);
+        }
+      });
+
+      // Only forward the request body for methods that actually carry one.
+      // Piping a GET request to TorrServer keeps an idle pipe open and adds
+      // overhead with no benefit.
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        req.pipe(proxyReq);
+      } else {
+        proxyReq.end();
+      }
+
+      res.on("close", () => {
+        log("stream connection closed by client", { infoHash: infoHash || label });
+        proxyReq.destroy();
+      });
+
+      return proxyReq;
+    }
+
     try {
-      // Reuse a warmed torrent if we already resolved its metadata; this
-      // avoids a second add+resolve round trip when the user actually clicks
-      // play on a release we pre-warmed during the meta/stream phase.
+      // Fast path: when the caller already knows which file index to play
+      // (the overwhelmingly common case — bitmagnet's GraphQL returns file
+      // indexes for movies and per-episode series releases), skip our own
+      // add+resolve polling loop entirely and hand the magnet straight to
+      // TorrServer's /stream endpoint. TorrServer will add the swarm and start
+      // serving bytes while it resolves peers, so the user sees first-byte
+      // far sooner than waiting for our metadata poll to complete first.
+      // Pre-warming may or may not have finished by now; either way TorrServer
+      // keeps a single in-flight add per hash, so this is race-free.
+      const canFastPath = Number.isInteger(fileIndex);
+      if (canFastPath) {
+        const magnet = encodeURIComponent(magnetUri);
+        const streamPath = `/stream?link=${magnet}&index=${fileIndex}&play`;
+        log("stream fast path", { infoHash, fileIndex });
+        startProxy(streamPath, "fast-path");
+        if (infoHash) warmedHashes.set(infoHash, { at: Date.now() });
+        return;
+      }
+
+      // Slow path: file index unknown (e.g. a season pack we haven't
+      // expanded). Resolve metadata, pick the right file, then proxy.
       const warmedInfo = infoHash ? warmedHashes.get(infoHash) : null;
       let torrTorrent;
       if (warmedInfo && Date.now() - warmedInfo.at < WARMED_TTL_MS) {
@@ -406,40 +482,7 @@ function createTorrentService(config) {
       warmedHashes.set(hash, { at: Date.now() });
       if (infoHash) warmedHashes.set(infoHash, { at: Date.now() });
 
-      const streamUrl = `${config.torrserverUrl}/stream?link=${hash}&index=${selectedFileIndex}&play`;
-
-      const parsedUrl = new URL(streamUrl);
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || 80,
-        path: parsedUrl.pathname + parsedUrl.search,
-        method: req.method,
-        headers: {
-          ...req.headers,
-          host: parsedUrl.host,
-        },
-      };
-
-      const proxyReq = http.request(options, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-      });
-
-      proxyReq.on("error", (error) => {
-        log("proxy stream error", { infoHash: hash, error: error.message });
-        if (!res.headersSent) {
-          res.status(500).send("Streaming failed.");
-        } else if (!res.destroyed) {
-          res.destroy(error);
-        }
-      });
-
-      req.pipe(proxyReq);
-
-      res.on("close", () => {
-        log("stream connection closed by client", { infoHash: hash });
-        proxyReq.destroy();
-      });
+      startProxy(`/stream?link=${hash}&index=${selectedFileIndex}&play`, "slow-path");
 
     } catch (error) {
       log("stream startup failed", { infoHash, error: error.message });
