@@ -97,8 +97,6 @@ services:
     environment:
       - TS_PORT=8090
       - TS_DONTKILL=1
-      - TS_REWIND_BUFFER=128
-      - TS_CACHE_SIZE=1024
     depends_on:
       gluetun:
         condition: service_healthy
