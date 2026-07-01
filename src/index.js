@@ -769,7 +769,7 @@ app.get("/health", async (_req, res) => {
 });
 
 const port = config.port;
-app.listen(port, () => {
+const server = app.listen(port, () => {
   const warning =
     config.adminPassword === "change-me-now"
       ? "WARNING: ADMIN_PASSWORD is still the default value."
@@ -777,3 +777,7 @@ app.listen(port, () => {
   console.log(`Bitlab listening on http://localhost:${port}`);
   console.log(warning);
 });
+
+server.timeout = 0;
+server.keepAliveTimeout = 0;
+server.requestTimeout = 0;

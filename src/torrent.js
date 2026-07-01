@@ -360,23 +360,74 @@ function createTorrentService(config) {
     const PROXY_HIGH_WATER_MARK = 256 * 1024;
 
     function startProxy(targetPath, label) {
+      // Disable timeouts on client request and response
+      req.setTimeout(0);
+      res.setTimeout(0);
+      if (req.socket) {
+        req.socket.setTimeout(0);
+        req.socket.setNoDelay(true);
+      }
+
       const parsedUrl = new URL(targetPath, config.torrserverUrl);
+
+      // Clean request headers to remove client-specific hop-by-hop headers
+      const cleanedReqHeaders = { ...req.headers };
+      const clientHopByHop = [
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+      ];
+      for (const header of clientHopByHop) {
+        delete cleanedReqHeaders[header];
+      }
+      cleanedReqHeaders["host"] = parsedUrl.host;
+
       const proxyReq = http.request({
         hostname: parsedUrl.hostname,
         port: parsedUrl.port || 80,
         path: parsedUrl.pathname + parsedUrl.search,
         method: req.method,
-        headers: {
-          ...req.headers,
-          host: parsedUrl.host,
-        },
+        headers: cleanedReqHeaders,
         highWaterMark: PROXY_HIGH_WATER_MARK,
       }, (proxyRes) => {
         if (proxyRes.socket) {
           proxyRes.socket.setNoDelay(true);
           proxyRes.socket.setTimeout(0);
         }
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+
+        // Clean response headers to remove backend-specific hop-by-hop headers.
+        // Stripping 'transfer-encoding' allows Node.js to properly manage HTTP chunking
+        // if content-length is absent, preventing raw bytes from being treated as chunks.
+        const cleanedResHeaders = { ...proxyRes.headers };
+        const backendHopByHop = [
+          "connection",
+          "keep-alive",
+          "proxy-authenticate",
+          "proxy-authorization",
+          "te",
+          "trailer",
+          "transfer-encoding",
+          "upgrade",
+        ];
+        for (const header of backendHopByHop) {
+          delete cleanedResHeaders[header];
+        }
+
+        // Handle errors on the backend response stream to prevent hanging connections
+        proxyRes.on("error", (error) => {
+          log("proxy response stream error", { infoHash: infoHash || label, error: error.message });
+          if (!res.destroyed) {
+            res.destroy(error);
+          }
+        });
+
+        res.writeHead(proxyRes.statusCode, cleanedResHeaders);
         proxyRes.pipe(res, { end: true });
       });
 
