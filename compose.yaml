@@ -20,7 +20,7 @@ services:
 
   frontend:
     image: xdillfrescott/bitlab:latest
-    container_name: bitmagnet-stremio-frontend
+    container_name: bitlab-app
     restart: unless-stopped
     network_mode: "service:wireguard"
     environment:
